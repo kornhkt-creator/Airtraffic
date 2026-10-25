@@ -10,12 +10,18 @@ import { distance } from './math';
 
 /** Started game with only its arrival (the random departure is removed so gates are predictable). */
 function startedSim(seed = 7): { sim: Simulation; ac: Aircraft } {
-  const sim = new Simulation({ seed });
+  const sim = new Simulation({ seed, autoSpawn: false });
   sim.start();
   sim.aircraft = sim.aircraft.filter((a) => a.flightType === 'ARRIVAL');
   const ac = sim.aircraft[0];
   if (!ac) throw new Error('no aircraft spawned');
   return { sim, ac };
+}
+
+function spawnArrival(sim: Simulation): Aircraft {
+  const a = sim.spawnArrival({ inbound: true });
+  if (!a) throw new Error('holding stack full');
+  return a;
 }
 
 /** Steps until the predicate holds; fails the test if it takes longer than maxSeconds. */
@@ -134,9 +140,18 @@ describe('Commands', () => {
 
   it('rejects LAND while the runway is occupied by another aircraft', () => {
     const { sim, ac } = startedSim();
-    const second = sim.spawnArrival();
     expect(sim.issueCommand({ type: 'LAND', aircraftId: ac.id }).ok).toBe(true);
+    // While cleared, the first keeps the bottom level: a newcomer is stacked above it.
+    const stacked = spawnArrival(sim);
+    expect(stacked.holdingLevel).toBe(1);
+    // During the rollout the stack is free again but the runway is not.
+    runUntil(sim, () => ac.status === 'LANDED');
+    sim.removeAircraft(stacked.id);
+    const second = spawnArrival(sim);
+    sim.step();
+    expect(second.holdingLevel).toBe(0);
     const r = sim.issueCommand({ type: 'LAND', aircraftId: second.id });
+    expect(r.message).toContain(ac.callsign);
     expect(r.ok).toBe(false);
     expect(r.message).toContain('occupied');
     expect(second.status).toBe('APPROACH');
@@ -152,7 +167,7 @@ describe('Commands', () => {
 
   it('rejects TAXI to a gate reserved by another aircraft', () => {
     const { sim, ac } = startedSim();
-    const other = sim.spawnArrival();
+    const other = spawnArrival(sim);
     other.gateId = 'G2';
     sim.issueCommand({ type: 'LAND', aircraftId: ac.id });
     runUntil(sim, () => ac.status === 'LANDED');

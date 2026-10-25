@@ -11,18 +11,17 @@ import { executeCommand, getCommandOptions, validateCommand, type CommandOption 
 import { getRunwayOccupants } from './safety/SafetySystem';
 import { updateAircraft } from './aircraft/AircraftAI';
 import { assignPath } from './aircraft/MovementSystem';
-import { apronNodeOf, createHoldingLoop, glideAltitude } from './aircraft/navigation';
+import { apronNodeOf, createHoldingLoop, glideAltitude, planInbound } from './aircraft/navigation';
+import { compactHoldingStack, freeHoldingLevel, levelAltitude } from './aircraft/holdingStack';
+import { difficultyLevel, isActiveFlight, SpawnSystem } from './SpawnSystem';
 import type { Path } from './path/Path';
-import { M_TO_FT, MS_TO_KT, toCompassDeg } from './math';
+import { fromAngle, M_TO_FT, MS_TO_KT, toCompassDeg } from './math';
 
 export interface SimulationOptions {
   seed?: number;
+  /** Schedule new traffic automatically (default true). Tests disable it for isolated scenarios. */
+  autoSpawn?: boolean;
 }
-
-const FINISHED = new Set(['DEPARTED', 'DIVERTED', 'CRASHED']);
-
-/** A flight still needs the controller unless it finished, or is an arrival parked at its gate. */
-const isActive = (a: Aircraft): boolean => !FINISHED.has(a.status) && !(a.flightType === 'ARRIVAL' && a.status === 'AT_GATE');
 
 /**
  * The complete game simulation in plain TypeScript (no React, no Three.js). Rendering reads from
@@ -33,6 +32,8 @@ export class Simulation implements SimWorld {
   readonly routes = new RouteManager(AIRPORT);
   readonly holdingLoop: Path = createHoldingLoop(AIRPORT);
   readonly scoring = new ScoringSystem();
+  readonly spawner = new SpawnSystem();
+  readonly autoSpawn: boolean;
 
   status: GameStatus = 'MENU';
   time = 0;
@@ -49,6 +50,7 @@ export class Simulation implements SimWorld {
   constructor(options: SimulationOptions = {}) {
     this.seed = options.seed ?? 1;
     this.rng = new Rng(this.seed);
+    this.autoSpawn = options.autoSpawn ?? true;
   }
 
   // ---- Game flow -------------------------------------------------------------------------
@@ -71,8 +73,9 @@ export class Simulation implements SimWorld {
   start(): void {
     if (this.status !== 'MENU') return;
     this.status = 'RUNNING';
-    this.spawnArrival();
+    this.spawnArrival({ inbound: false });
     this.spawnDeparture();
+    this.spawner.reset(this.time, this.rng);
   }
 
   restart(seed?: number): void {
@@ -114,11 +117,13 @@ export class Simulation implements SimWorld {
     const dt = this.clock.dt;
     this.time += dt;
     this.tick += 1;
+    compactHoldingStack(this.aircraft);
     for (const ac of this.aircraft) {
       ac.prev = { position: { ...ac.position }, altitude: ac.altitude, heading: ac.heading };
       updateAircraft(this, ac, dt);
     }
     this.processEvents();
+    this.spawner.update(this, this.rng, this.autoSpawn);
     this.alerts = this.alerts.filter((a) => a.expiresAt === null || a.expiresAt > this.time);
   }
 
@@ -130,6 +135,10 @@ export class Simulation implements SimWorld {
 
   emit(event: SimEvent): void {
     this.events.push(event);
+  }
+
+  removeAircraft(id: string): void {
+    this.aircraft = this.aircraft.filter((a) => a.id !== id);
   }
 
   // ---- Commands --------------------------------------------------------------------------
@@ -182,17 +191,42 @@ export class Simulation implements SimWorld {
       pushback: null,
       onRunway: false,
       waitTime: 0,
+      holdingLevel: null,
+      divertWarned: false,
+      gateTime: 0,
     };
   }
 
-  spawnArrival(): Aircraft {
-    const s = this.rng.range(0, this.holdingLoop.length * 0.2);
-    const sample = this.holdingLoop.sample(s);
-    const ac = this.createAircraft('ARRIVAL', 'APPROACH', sample.position, sample.heading, SIM_CONFIG.air.holdingAltitude, SIM_CONFIG.air.approachSpeed);
-    assignPath(ac, this.holdingLoop, 'holding', SIM_CONFIG.air.approachSpeed);
-    ac.nav.s = s;
+  /**
+   * Adds an arrival on its own holding-stack level. `inbound` arrivals appear away from the airport
+   * and fly to the holding pattern; otherwise they start inside it. Returns null when the stack is full.
+   */
+  spawnArrival(options: { inbound: boolean } = { inbound: true }): Aircraft | null {
+    const level = freeHoldingLevel(this.aircraft);
+    if (level === null) return null;
+    const altitude = levelAltitude(level);
+    const speed = SIM_CONFIG.air.approachSpeed;
+    let ac: Aircraft;
+    if (options.inbound) {
+      const t = SIM_CONFIG.traffic;
+      const bearing = (this.rng.range(t.spawnBearingDeg[0], t.spawnBearingDeg[1]) * Math.PI) / 180;
+      const center = this.routes.layout.approach.holdingCenter;
+      const dir = fromAngle(bearing);
+      const position = { x: center.x + dir.x * t.spawnDistance, y: center.y + dir.y * t.spawnDistance };
+      const heading = bearing + Math.PI;
+      ac = this.createAircraft('ARRIVAL', 'APPROACH', position, heading, altitude, speed);
+      assignPath(ac, planInbound({ position, heading }, this.holdingLoop), 'inbound', speed);
+    } else {
+      const s = this.rng.range(0, this.holdingLoop.length * 0.2);
+      const sample = this.holdingLoop.sample(s);
+      ac = this.createAircraft('ARRIVAL', 'APPROACH', sample.position, sample.heading, altitude, speed);
+      assignPath(ac, this.holdingLoop, 'holding', speed);
+      ac.nav.s = s;
+    }
+    ac.holdingLevel = level;
     this.aircraft.push(ac);
-    this.pushAlert('info', `${ac.callsign} is holding and requesting landing clearance.`, ac.id);
+    const where = options.inbound ? 'inbound to the holding fix' : 'is holding';
+    this.pushAlert('info', `${ac.callsign} ${where}, requesting landing clearance.`, ac.id);
     return ac;
   }
 
@@ -232,6 +266,11 @@ export class Simulation implements SimWorld {
         this.pushAlert('info', `${ac.callsign} vacated the runway and is waiting for taxi clearance.`, ac.id);
       } else if (e.type === 'PUSHBACK_COMPLETED' && !ac.pendingRoute) {
         this.pushAlert('info', `${ac.callsign} pushback complete, ready to taxi.`, ac.id);
+      } else if (e.type === 'DIVERT_WARNING') {
+        this.pushAlert('warning', `${ac.callsign} low on fuel — will divert in ${e.secondsLeft} s without landing clearance.`, ac.id);
+      } else if (e.type === 'FLIGHT_DIVERTED') {
+        const points = this.scoring.recordPenalty(ac.id, 'diversion');
+        if (points !== null) this.pushAlert('warning', `${ac.callsign} diverted to another airport. −${points}`, ac.id);
       } else if (e.type === 'FLIGHT_COMPLETED') {
         const points = this.scoring.recordCompletion(ac.id, ac.flightType);
         if (points !== null) {
@@ -271,11 +310,11 @@ export class Simulation implements SimWorld {
     const liftoff = (d.rotationSpeed * d.rotationSpeed) / (2 * d.takeoffAccel);
     const altitudeAt = (s: number): number => {
       if (kind === 'approach') return glideAltitude(path.length - s);
-      if (kind === 'holding') return SIM_CONFIG.air.holdingAltitude;
+      if (kind === 'holding' || kind === 'inbound' || kind === 'divert') return levelAltitude(ac.holdingLevel);
       if (kind === 'takeoff') return Math.min(d.climbAltitude, ac.altitude + Math.max(0, s - startS - (ac.altitude > 0 ? 0 : liftoff)) * (d.climbRate / d.climbSpeed));
       return 0;
     };
-    const airborne = kind === 'holding' || kind === 'approach' || kind === 'takeoff';
+    const airborne = kind === 'holding' || kind === 'inbound' || kind === 'divert' || kind === 'approach' || kind === 'takeoff';
     const points: Vec3[] = path.samplePoints(airborne ? 120 : 8).map(({ s, position }) => ({ x: position.x, y: position.y, alt: altitudeAt(s) }));
     if (ac.pendingRoute) {
       // A rollout ends on the route's first node; a pushback ends short of it.
@@ -288,8 +327,14 @@ export class Simulation implements SimWorld {
   private describeTarget(ac: Aircraft): string {
     const rwy = this.routes.layout.runway.designators[0];
     switch (ac.status) {
-      case 'APPROACH':
-        return 'Holding — awaiting landing clearance';
+      case 'APPROACH': {
+        const level = ac.holdingLevel ?? 0;
+        const ft = Math.round((levelAltitude(level) * M_TO_FT) / 100) * 100;
+        if (ac.nav.kind === 'inbound') return `Inbound to holding fix — level ${level + 1} (${ft} ft)`;
+        return level === 0 ? `Holding at ${ft} ft — ready for landing clearance` : `Holding at level ${level + 1} (${ft} ft) — descending in stack`;
+      }
+      case 'DIVERTED':
+        return 'Diverting to alternate airport';
       case 'LANDING':
         return `Cleared to land RWY ${this.routes.layout.runway.designators[0]}`;
       case 'LANDED': {
@@ -332,6 +377,8 @@ export class Simulation implements SimWorld {
       waitTime: ac.waitTime,
       pathVersion: ac.nav.version,
       onRunway: ac.onRunway,
+      holdingLevel: ac.holdingLevel,
+      divertIn: ac.status === 'APPROACH' && ac.nav.kind === 'holding' ? Math.max(0, SIM_CONFIG.air.maxHoldingTime - ac.waitTime) : null,
       commands: getCommandOptions(this, ac),
     }));
     return {
@@ -340,7 +387,9 @@ export class Simulation implements SimWorld {
       timeScale: this.clock.timeScale,
       score: this.scoring.score,
       completedFlights: this.scoring.completedFlights,
-      activeFlights: this.aircraft.filter(isActive).length,
+      diversions: this.scoring.diversions,
+      difficultyLevel: difficultyLevel(this.time),
+      activeFlights: this.aircraft.filter(isActiveFlight).length,
       aircraft: views,
       alerts: this.alerts.map((a) => ({ ...a })),
       runwayOccupiedBy: getRunwayOccupants(this.aircraft).map((a) => a.callsign),

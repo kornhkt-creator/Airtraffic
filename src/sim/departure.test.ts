@@ -6,12 +6,18 @@ import type { Aircraft } from './types';
 
 /** Started game with a single departure parked at the given gate (the random spawns are removed). */
 function departureSim(gate = 'G4', seed = 11): { sim: Simulation; dep: Aircraft } {
-  const sim = new Simulation({ seed });
+  const sim = new Simulation({ seed, autoSpawn: false });
   sim.start();
   sim.aircraft = [];
   const dep = sim.spawnDeparture(gate);
   if (!dep) throw new Error('could not spawn departure');
   return { sim, dep };
+}
+
+function spawnArrival(sim: Simulation): Aircraft {
+  const a = sim.spawnArrival({ inbound: false });
+  if (!a) throw new Error('holding stack full');
+  return a;
 }
 
 function runUntil(sim: Simulation, predicate: () => boolean, maxSeconds = 600, onTick?: () => void): void {
@@ -153,7 +159,7 @@ describe('Departure command validation', () => {
 
   it('rejects PUSHBACK for an arrival parked at a gate', () => {
     const { sim } = departureSim();
-    const arr = sim.spawnArrival();
+    const arr = spawnArrival(sim);
     arr.status = 'AT_GATE';
     arr.gateId = 'G1';
     const r = sim.issueCommand({ type: 'PUSHBACK', aircraftId: arr.id });
@@ -175,11 +181,12 @@ describe('Departure command validation', () => {
 
   it('keeps the runway exclusive between arrivals and departures', () => {
     const { sim, dep } = departureSim();
-    const arr = sim.spawnArrival();
     ok(sim, { type: 'PUSHBACK', aircraftId: dep.id });
     runUntil(sim, () => dep.nav.path === null);
     ok(sim, { type: 'TAXI', aircraftId: dep.id, destinationId: 'H1' });
     runUntil(sim, () => dep.status === 'HOLDING');
+    // Spawned only now: an arrival kept holding through the whole taxi would divert.
+    const arr = spawnArrival(sim);
 
     // Arrival cleared first: departure may not line up.
     ok(sim, { type: 'LAND', aircraftId: arr.id });
@@ -190,7 +197,7 @@ describe('Departure command validation', () => {
     // Once the arrival has vacated, the departure can go — and blocks a new landing clearance.
     runUntil(sim, () => arr.status === 'LANDED' && !arr.onRunway);
     ok(sim, { type: 'LINE_UP', aircraftId: dep.id });
-    const second = sim.spawnArrival();
+    const second = spawnArrival(sim);
     const land = sim.issueCommand({ type: 'LAND', aircraftId: second.id });
     expect(land.ok).toBe(false);
     expect(land.message).toContain(dep.callsign);

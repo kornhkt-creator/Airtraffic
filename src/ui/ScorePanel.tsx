@@ -10,6 +10,8 @@ export function ScorePanel() {
   const score = useGameStore((s) => s.snapshot.score);
   const active = useGameStore((s) => s.snapshot.activeFlights);
   const completed = useGameStore((s) => s.snapshot.completedFlights);
+  const diversions = useGameStore((s) => s.snapshot.diversions);
+  const level = useGameStore((s) => s.snapshot.difficultyLevel);
   const timeScale = useGameStore((s) => s.snapshot.timeScale);
   const runway = useGameStore((s) => s.snapshot.runwayOccupiedBy);
   const inGame = status === 'RUNNING' || status === 'PAUSED';
@@ -23,8 +25,10 @@ export function ScorePanel() {
       <div className="hud-stats">
         <Stat label="Score" value={String(score)} />
         <Stat label="Time" value={formatClock(time)} />
+        <Stat label="Level" value={`${level} / ${SIM_CONFIG.traffic.difficultyLevels}`} />
         <Stat label="Active" value={String(active)} />
         <Stat label="Completed" value={String(completed)} />
+        <Stat label="Diverted" value={String(diversions)} tone={diversions > 0 ? 'warn' : undefined} />
         <Stat label="RWY 09/27" value={runway.length > 0 ? runway.join(', ') : 'Clear'} tone={runway.length > 0 ? 'warn' : 'ok'} />
       </div>
       <div className="hud-controls">

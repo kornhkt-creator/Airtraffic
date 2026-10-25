@@ -38,7 +38,7 @@ export type AircraftStatus = (typeof AIRCRAFT_STATUSES)[number];
 
 export type GameStatus = 'MENU' | 'RUNNING' | 'PAUSED' | 'GAME_OVER';
 
-export type NavKind = 'none' | 'holding' | 'approach' | 'rollout' | 'taxi' | 'pushback' | 'lineup' | 'takeoff';
+export type NavKind = 'none' | 'inbound' | 'holding' | 'approach' | 'rollout' | 'taxi' | 'pushback' | 'lineup' | 'takeoff' | 'divert';
 
 export interface NavState {
   path: Path | null;
@@ -95,6 +95,12 @@ export interface Aircraft {
   onRunway: boolean;
   /** Seconds spent waiting for a controller instruction. */
   waitTime: number;
+  /** Index into the holding stack levels while holding or inbound (null otherwise). */
+  holdingLevel: number | null;
+  /** True once the low-fuel diversion warning has been issued. */
+  divertWarned: boolean;
+  /** Seconds parked at the gate (drives the arrival → departure turnaround). */
+  gateTime: number;
 }
 
 /** Commands that need no parameter besides the aircraft. */
@@ -126,4 +132,6 @@ export type SimEvent =
   | { type: 'STATUS_CHANGED'; aircraftId: string; from: AircraftStatus; to: AircraftStatus }
   | { type: 'RUNWAY_VACATED'; aircraftId: string }
   | { type: 'PUSHBACK_COMPLETED'; aircraftId: string }
-  | { type: 'FLIGHT_COMPLETED'; aircraftId: string };
+  | { type: 'FLIGHT_COMPLETED'; aircraftId: string }
+  | { type: 'DIVERT_WARNING'; aircraftId: string; secondsLeft: number }
+  | { type: 'FLIGHT_DIVERTED'; aircraftId: string };

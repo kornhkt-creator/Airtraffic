@@ -81,10 +81,10 @@ button {
 .stat {
   display: flex;
   flex-direction: column;
-  padding: 4px 12px;
+  padding: 4px 10px;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.04);
-  min-width: 84px;
+  min-width: 70px;
 }
 
 .stat-label {
@@ -300,6 +300,20 @@ button {
   font-size: 12px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+.wait.fuel {
+  color: #93c5fd;
+}
+
+.wait.fuel.low,
+.fuel-low dd {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.st-diverted {
+  background: #9a3412;
 }
 
 /* ---------- Status badges (shared with 3D labels) ---------- */
@@ -553,11 +567,14 @@ button {
   outline-offset: 1px;
 }
 
+@media (max-width: 1400px) {
+  .brand-name {
+    display: none;
+  }
+}
+
 @media (max-width: 1100px) {
   .layout {
     grid-template-columns: 210px 1fr 270px;
-  }
-  .brand-name {
-    display: none;
   }
 }

@@ -7,6 +7,7 @@ import { assignPath } from './aircraft/MovementSystem';
 import { beginTaxi } from './aircraft/AircraftAI';
 import { apronNodeOf, planLanding, planLineUp, planPushback, planTakeoff } from './aircraft/navigation';
 import { isRunwayAvailableFor } from './safety/SafetySystem';
+import { levelAltitude } from './aircraft/holdingStack';
 
 export type Validation = { ok: true; route?: string[] } | { ok: false; reason: string };
 
@@ -49,12 +50,12 @@ function requireType(ac: Aircraft, type: Aircraft['flightType'], action: string)
 }
 
 export function validateLand(world: SimWorld, ac: Aircraft): Validation {
-  return (
-    checkGame(world) ??
-    requireType(ac, 'ARRIVAL', 'landing clearance') ??
-    requireStatus(ac, 'APPROACH', 'landing clearance') ??
-    checkRunway(world, ac) ?? { ok: true }
-  );
+  const base = checkGame(world) ?? requireType(ac, 'ARRIVAL', 'landing clearance') ?? requireStatus(ac, 'APPROACH', 'landing clearance');
+  if (base) return base;
+  // Only the bottom of the holding stack can make the glide path in time.
+  if ((ac.holdingLevel ?? 0) > 0) return reject(`${ac.callsign} is at holding level ${(ac.holdingLevel ?? 0) + 1} — only the lowest aircraft in the stack can be cleared to land.`);
+  if (ac.altitude > levelAltitude(0) + SIM_CONFIG.air.landingAltitudeTolerance) return reject(`${ac.callsign} is still descending to the bottom of the holding stack.`);
+  return checkRunway(world, ac) ?? { ok: true };
 }
 
 export function validatePushback(world: SimWorld, ac: Aircraft): Validation {
@@ -153,6 +154,7 @@ export function executeCommand(world: SimWorld, cmd: Command, validation: Valida
   switch (cmd.type) {
     case 'LAND': {
       transition(ac, 'LANDING', emit);
+      // The stack level is released by compactHoldingStack once the aircraft is clear below it.
       assignPath(ac, planLanding(ac, world.routes.layout), 'approach', SIM_CONFIG.air.touchdownSpeed);
       ac.waitTime = 0;
       return `${ac.callsign}, cleared to land runway ${rwy}.`;

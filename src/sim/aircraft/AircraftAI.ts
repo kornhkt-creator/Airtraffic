@@ -3,7 +3,8 @@ import type { SimWorld } from '../world';
 import { SIM_CONFIG } from '../config';
 import { transition } from './AircraftStateMachine';
 import { advanceAlongPath, assignPath, remainingDistance, updateAltitude } from './MovementSystem';
-import { distancePastRunwayEnd, glideAltitude, planRollout, planTaxi } from './navigation';
+import { distancePastRunwayEnd, glideAltitude, planDivert, planRollout, planTaxi } from './navigation';
+import { levelAltitude } from './holdingStack';
 
 /**
  * Starts taxiing along a validated ground route. `startPoint` is used when the aircraft is not on
@@ -72,14 +73,38 @@ function updateTakeoff(world: SimWorld, ac: Aircraft, dt: number): void {
   }
 }
 
+/** Flies inbound to the holding pattern, then holds at its stack level until cleared or diverted. */
+function updateApproach(world: SimWorld, ac: Aircraft, dt: number): void {
+  const air = SIM_CONFIG.air;
+  if (advanceAlongPath(ac, dt) && ac.nav.kind === 'inbound') {
+    assignPath(ac, world.holdingLoop, 'holding', air.approachSpeed);
+  }
+  updateAltitude(ac, levelAltitude(ac.holdingLevel), air.maxVerticalSpeed, dt);
+  if (ac.nav.kind !== 'holding') return;
+
+  ac.waitTime += dt;
+  const left = air.maxHoldingTime - ac.waitTime;
+  if (!ac.divertWarned && left <= air.divertWarning) {
+    ac.divertWarned = true;
+    world.emit({ type: 'DIVERT_WARNING', aircraftId: ac.id, secondsLeft: Math.ceil(left) });
+  }
+  if (left <= 0) {
+    transition(ac, 'DIVERTED', (e) => world.emit(e));
+    assignPath(ac, planDivert(ac, world.routes.layout), 'divert', air.approachSpeed);
+    world.emit({ type: 'FLIGHT_DIVERTED', aircraftId: ac.id });
+  }
+}
+
 /** Per-tick behavior for one aircraft, driven by its current status. */
 export function updateAircraft(world: SimWorld, ac: Aircraft, dt: number): void {
   const air = SIM_CONFIG.air;
   switch (ac.status) {
-    case 'APPROACH': {
-      advanceAlongPath(ac, dt);
-      updateAltitude(ac, air.holdingAltitude, air.maxVerticalSpeed, dt);
-      ac.waitTime += dt;
+    case 'APPROACH':
+      updateApproach(world, ac, dt);
+      break;
+    case 'DIVERTED': {
+      if (advanceAlongPath(ac, dt)) assignPath(ac, null, 'none', 0);
+      updateAltitude(ac, levelAltitude(ac.holdingLevel), air.maxVerticalSpeed, dt);
       break;
     }
     case 'LANDING': {
@@ -101,6 +126,7 @@ export function updateAircraft(world: SimWorld, ac: Aircraft, dt: number): void 
     case 'AT_GATE':
       ac.speed = 0;
       if (ac.flightType === 'DEPARTURE') ac.waitTime += dt;
+      else ac.gateTime += dt;
       break;
     case 'PUSHBACK': {
       const finished = advanceAlongPath(ac, dt);
@@ -122,7 +148,7 @@ export function updateAircraft(world: SimWorld, ac: Aircraft, dt: number): void 
       updateTakeoff(world, ac, dt);
       break;
     default:
-      // GO_AROUND, DIVERTED and CRASHED behavior arrives with later milestones.
+      // GO_AROUND and CRASHED behavior arrives with later milestones.
       break;
   }
 }

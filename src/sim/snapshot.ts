@@ -14,6 +14,10 @@ export interface AircraftView {
   waitTime: number;
   pathVersion: number;
   onRunway: boolean;
+  /** Holding stack level (0 = bottom) for inbound/holding arrivals. */
+  holdingLevel: number | null;
+  /** Seconds until a holding arrival diverts, or null when not holding. */
+  divertIn: number | null;
   commands: CommandOption[];
 }
 
@@ -23,6 +27,8 @@ export interface SimSnapshot {
   timeScale: number;
   score: number;
   completedFlights: number;
+  diversions: number;
+  difficultyLevel: number;
   activeFlights: number;
   aircraft: AircraftView[];
   alerts: Alert[];

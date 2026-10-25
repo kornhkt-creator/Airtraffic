@@ -18,6 +18,23 @@ export function createHoldingLoop(layout: AirportLayout = AIRPORT): Path {
   return buildRacetrackLoop(a.holdingCenter, a.holdingStraight, a.holdingRadius, SIM_CONFIG.air.approachSpeed, AIR_MOTION);
 }
 
+/** Curvature-bounded path from a spawn pose to the holding pattern entry. */
+export function planInbound(from: { position: Vec2; heading: number }, holdingLoop: Path): Path {
+  const entry = holdingLoop.startSample;
+  return new Path(dubinsSegments(from, entry, SIM_CONFIG.air.turnRadius, SIM_CONFIG.air.approachSpeed), AIR_MOTION);
+}
+
+/** Path away from the airport (beyond the holding fix) for an arrival that ran out of holding time. */
+export function planDivert(ac: Aircraft, layout: AirportLayout = AIRPORT): Path {
+  const center = layout.approach.holdingCenter;
+  const away = normalize(sub(center, layout.runway.touchdown));
+  const exit = { x: center.x + away.x * SIM_CONFIG.air.divertDistance, y: center.y + away.y * SIM_CONFIG.air.divertDistance };
+  return new Path(
+    dubinsSegments({ position: ac.position, heading: ac.heading }, { position: exit, heading: Math.atan2(away.y, away.x) }, SIM_CONFIG.air.turnRadius, SIM_CONFIG.air.approachSpeed),
+    AIR_MOTION,
+  );
+}
+
 /** Target altitude on the approach given the remaining distance to touchdown. */
 export function glideAltitude(remainingToTouchdown: number): number {
   return Math.min(SIM_CONFIG.air.holdingAltitude, Math.max(0, remainingToTouchdown) * glideTan);

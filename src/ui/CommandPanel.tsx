@@ -1,6 +1,7 @@
 import { useGame, useGameStore } from '../game/GameContext';
 import type { CommandOption } from '../sim/CommandSystem';
 import type { AircraftView } from '../sim/snapshot';
+import { SIM_CONFIG } from '../sim/config';
 import { formatClock, STATUS_LABEL, statusClass } from './format';
 
 /** Right panel: selected aircraft details and the commands that can be issued to it. */
@@ -43,6 +44,18 @@ function Details({ aircraft: a }: { aircraft: AircraftView }) {
           <dt>Waiting</dt>
           <dd>{formatClock(a.waitTime)}</dd>
         </div>
+        {a.holdingLevel !== null && (
+          <div>
+            <dt>Stack level</dt>
+            <dd>{a.holdingLevel + 1}</dd>
+          </div>
+        )}
+        {a.divertIn !== null && (
+          <div className={a.divertIn <= SIM_CONFIG.air.divertWarning ? 'fuel-low' : ''}>
+            <dt>Diverts in</dt>
+            <dd>{formatClock(a.divertIn)}</dd>
+          </div>
+        )}
       </dl>
       <div className="target">
         <span className="stat-label">Current instruction</span>
