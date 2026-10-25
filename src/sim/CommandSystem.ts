@@ -1,10 +1,11 @@
-import type { Aircraft, Command, CommandType } from './types';
+import type { Aircraft, Command, CommandType, SimpleCommandType } from './types';
 import type { SimWorld } from './world';
 import { SIM_CONFIG } from './config';
+import { distance, dot, fromAngle, normalize, sub } from './math';
 import { transition } from './aircraft/AircraftStateMachine';
 import { assignPath } from './aircraft/MovementSystem';
 import { beginTaxi } from './aircraft/AircraftAI';
-import { planLanding } from './aircraft/navigation';
+import { apronNodeOf, planLanding, planLineUp, planPushback, planTakeoff } from './aircraft/navigation';
 import { isRunwayAvailableFor } from './safety/SafetySystem';
 
 export type Validation = { ok: true; route?: string[] } | { ok: false; reason: string };
@@ -26,18 +27,45 @@ export interface CommandOption {
 
 const reject = (reason: string): Validation => ({ ok: false, reason });
 
+/** Statuses in which an aircraft is physically on the ground and moving around the airport. */
+const GROUND_TRAFFIC = new Set(['LANDED', 'TAXIING', 'PUSHBACK', 'HOLDING', 'LINE_UP']);
+
 function checkGame(world: SimWorld): Validation | null {
   if (world.status !== 'RUNNING' && world.status !== 'PAUSED') return reject('The game is not running.');
   return null;
 }
 
-export function validateLand(world: SimWorld, ac: Aircraft): Validation {
-  const game = checkGame(world);
-  if (game) return game;
-  if (ac.flightType !== 'ARRIVAL') return reject(`${ac.callsign} is a departure and cannot be cleared to land.`);
-  if (ac.status !== 'APPROACH') return reject(`${ac.callsign} is ${ac.status} — landing clearance requires APPROACH.`);
+function checkRunway(world: SimWorld, ac: Aircraft): Validation | null {
   const runway = isRunwayAvailableFor(world.aircraft, ac);
-  if (!runway.ok) return reject(`Runway ${world.routes.layout.runway.id} is occupied by ${runway.occupant.callsign}.`);
+  return runway.ok ? null : reject(`Runway ${world.routes.layout.runway.id} is occupied by ${runway.occupant.callsign}.`);
+}
+
+function requireStatus(ac: Aircraft, status: Aircraft['status'], action: string): Validation | null {
+  return ac.status === status ? null : reject(`${ac.callsign} is ${ac.status} — ${action} requires ${status}.`);
+}
+
+function requireType(ac: Aircraft, type: Aircraft['flightType'], action: string): Validation | null {
+  return ac.flightType === type ? null : reject(`${ac.callsign} is ${ac.flightType === 'ARRIVAL' ? 'an arrival' : 'a departure'} — ${action} is not applicable.`);
+}
+
+export function validateLand(world: SimWorld, ac: Aircraft): Validation {
+  return (
+    checkGame(world) ??
+    requireType(ac, 'ARRIVAL', 'landing clearance') ??
+    requireStatus(ac, 'APPROACH', 'landing clearance') ??
+    checkRunway(world, ac) ?? { ok: true }
+  );
+}
+
+export function validatePushback(world: SimWorld, ac: Aircraft): Validation {
+  const base = checkGame(world) ?? requireType(ac, 'DEPARTURE', 'pushback') ?? requireStatus(ac, 'AT_GATE', 'pushback');
+  if (base) return base;
+  if (!ac.gateId) return reject(`${ac.callsign} is not parked at a gate.`);
+  const apron = world.routes.node(apronNodeOf(ac.gateId, world.routes)).position;
+  const blocker = world.aircraft.find(
+    (a) => a.id !== ac.id && GROUND_TRAFFIC.has(a.status) && distance(a.position, apron) < SIM_CONFIG.ground.pushbackClearance,
+  );
+  if (blocker) return reject(`Apron behind ${world.routes.label(ac.gateId)} is not clear — ${blocker.callsign} is too close.`);
   return { ok: true };
 }
 
@@ -47,7 +75,12 @@ function taxiStartNode(ac: Aircraft): { node: string } | { reason: string } {
     if (!ac.exitNodeId) return { reason: `${ac.callsign} has no runway exit assigned yet.` };
     return { node: ac.exitNodeId };
   }
-  return { reason: `${ac.callsign} is ${ac.status} — taxi clearance requires LANDED.` };
+  if (ac.status === 'PUSHBACK') {
+    if (!ac.pushback) return { reason: `${ac.callsign} has no pushback position.` };
+    return { node: ac.pushback.apronNodeId };
+  }
+  const needed = ac.flightType === 'ARRIVAL' ? 'LANDED' : 'PUSHBACK';
+  return { reason: `${ac.callsign} is ${ac.status} — taxi clearance requires ${needed}.` };
 }
 
 export function validateTaxi(world: SimWorld, ac: Aircraft, destinationId: string): Validation {
@@ -59,11 +92,39 @@ export function validateTaxi(world: SimWorld, ac: Aircraft, destinationId: strin
   if (!routes.hasNode(destinationId)) return reject(`Unknown destination ${destinationId}.`);
   const dest = routes.node(destinationId);
   if (ac.flightType === 'ARRIVAL' && dest.kind !== 'gate') return reject('Arrivals must taxi to a gate.');
-  const blocker = world.aircraft.find((a) => a.id !== ac.id && (a.gateId === destinationId || a.destinationId === destinationId));
-  if (blocker) return reject(`${routes.label(destinationId)} is ${blocker.gateId === destinationId ? 'occupied' : 'reserved'} by ${blocker.callsign}.`);
+  if (ac.flightType === 'DEPARTURE' && dest.kind !== 'holdingPoint') return reject('Departures must taxi to a runway holding point.');
+  const blocker = world.aircraft.find(
+    (a) => a.id !== ac.id && (a.gateId === destinationId || a.holdingPointId === destinationId || a.destinationId === destinationId),
+  );
+  if (blocker) {
+    const occupied = blocker.gateId === destinationId || blocker.holdingPointId === destinationId;
+    return reject(`${routes.label(destinationId)} is ${occupied ? 'occupied' : 'reserved'} by ${blocker.callsign}.`);
+  }
   const route = routes.findRoute(start.node, destinationId);
   if (!route || route.length < 2) return reject(`No valid taxi route to ${routes.label(destinationId)}.`);
+  if (ac.status === 'PUSHBACK' && ac.pushback) {
+    // The aircraft cannot reverse on its own: the route must continue in the direction it faces.
+    const first = normalize(sub(routes.node(route[1] as string).position, routes.node(route[0] as string).position));
+    const facing = normalize(sub(routes.node(ac.pushback.apronNodeId).position, ac.pushback.endPoint));
+    if (dot(first, facing) < 0) return reject(`${ac.callsign} faces the wrong way for that route.`);
+  }
   return { ok: true, route };
+}
+
+export function validateLineUp(world: SimWorld, ac: Aircraft): Validation {
+  const base = checkGame(world) ?? requireType(ac, 'DEPARTURE', 'line up') ?? requireStatus(ac, 'HOLDING', 'line up');
+  if (base) return base;
+  if (!ac.holdingPointId) return reject(`${ac.callsign} is not at a runway holding point.`);
+  return checkRunway(world, ac) ?? { ok: true };
+}
+
+export function validateTakeoff(world: SimWorld, ac: Aircraft): Validation {
+  const base = checkGame(world) ?? requireType(ac, 'DEPARTURE', 'takeoff clearance') ?? requireStatus(ac, 'LINE_UP', 'takeoff clearance');
+  if (base) return base;
+  if (ac.nav.path) return reject(`${ac.callsign} is still lining up.`);
+  const heading = fromAngle(world.routes.layout.runway.heading);
+  if (dot(fromAngle(ac.heading), heading) < 0.99) return reject(`${ac.callsign} is not aligned with the runway.`);
+  return checkRunway(world, ac) ?? { ok: true };
 }
 
 export function validateCommand(world: SimWorld, cmd: Command): Validation {
@@ -72,8 +133,14 @@ export function validateCommand(world: SimWorld, cmd: Command): Validation {
   switch (cmd.type) {
     case 'LAND':
       return validateLand(world, ac);
+    case 'PUSHBACK':
+      return validatePushback(world, ac);
     case 'TAXI':
       return validateTaxi(world, ac, cmd.destinationId);
+    case 'LINE_UP':
+      return validateLineUp(world, ac);
+    case 'TAKEOFF':
+      return validateTakeoff(world, ac);
   }
 }
 
@@ -81,47 +148,95 @@ export function validateCommand(world: SimWorld, cmd: Command): Validation {
 export function executeCommand(world: SimWorld, cmd: Command, validation: Validation & { ok: true }): string {
   const ac = world.getAircraft(cmd.aircraftId);
   if (!ac) throw new Error(`Unknown aircraft ${cmd.aircraftId}`);
+  const emit = world.emit.bind(world);
+  const rwy = world.routes.layout.runway.designators[0];
   switch (cmd.type) {
     case 'LAND': {
-      transition(ac, 'LANDING', (e) => world.emit(e));
+      transition(ac, 'LANDING', emit);
       assignPath(ac, planLanding(ac, world.routes.layout), 'approach', SIM_CONFIG.air.touchdownSpeed);
       ac.waitTime = 0;
-      return `${ac.callsign}, cleared to land runway ${world.routes.layout.runway.designators[0]}.`;
+      return `${ac.callsign}, cleared to land runway ${rwy}.`;
+    }
+    case 'PUSHBACK': {
+      if (!ac.gateId) throw new Error('PUSHBACK executed without a gate');
+      const gate = world.routes.label(ac.gateId);
+      const { path, apronNodeId, endPoint } = planPushback(ac.gateId, world.routes);
+      transition(ac, 'PUSHBACK', emit);
+      ac.pushback = { apronNodeId, endPoint };
+      assignPath(ac, path, 'pushback', 0, true);
+      ac.waitTime = 0;
+      return `${ac.callsign}, pushback approved from ${gate}.`;
     }
     case 'TAXI': {
       const route = validation.route;
       if (!route) throw new Error('TAXI executed without a validated route');
       ac.destinationId = cmd.destinationId;
       ac.waitTime = 0;
-      if (ac.nav.kind === 'rollout') {
+      const inProgress = (ac.status === 'LANDED' && ac.nav.kind === 'rollout') || (ac.status === 'PUSHBACK' && ac.nav.kind === 'pushback');
+      if (inProgress) {
         ac.pendingRoute = route;
         ac.routeNodeIds = route;
-        ac.nav.endSpeed = SIM_CONFIG.ground.exitHandoffSpeed;
+        // Keep rolling into the taxi route after a landing; a pushback must stop before moving forward.
+        if (ac.status === 'LANDED') ac.nav.endSpeed = SIM_CONFIG.ground.exitHandoffSpeed;
       } else {
         beginTaxi(world, ac, route);
       }
       const via = world.routes.describeRoute(route);
       return `${ac.callsign}, taxi to ${world.routes.label(cmd.destinationId)}${via ? ` via ${via}` : ''}.`;
     }
+    case 'LINE_UP': {
+      if (!ac.holdingPointId) throw new Error('LINE_UP executed away from a holding point');
+      transition(ac, 'LINE_UP', emit);
+      assignPath(ac, planLineUp(ac.holdingPointId, world.routes), 'lineup', 0);
+      ac.holdingPointId = null;
+      ac.onRunway = true;
+      ac.waitTime = 0;
+      return `${ac.callsign}, line up and wait runway ${rwy}.`;
+    }
+    case 'TAKEOFF': {
+      transition(ac, 'TAKEOFF', emit);
+      assignPath(ac, planTakeoff(ac, world.routes.layout), 'takeoff', SIM_CONFIG.departure.climbSpeed);
+      ac.waitTime = 0;
+      return `${ac.callsign}, runway ${rwy}, cleared for takeoff.`;
+    }
   }
 }
 
-/** Every command for the aircraft with whether it is currently allowed (used by the command panel). */
-export function getCommandOptions(world: SimWorld, ac: Aircraft): CommandOption[] {
-  const land = validateLand(world, ac);
-  const destinations: DestinationOption[] = world.routes.layout.gateIds.map((id) => {
+const SIMPLE_LABELS: Record<SimpleCommandType, string> = {
+  LAND: 'Clear to land',
+  PUSHBACK: 'Approve pushback',
+  LINE_UP: 'Line up and wait',
+  TAKEOFF: 'Clear for takeoff',
+};
+
+const SIMPLE_VALIDATORS: Record<SimpleCommandType, (world: SimWorld, ac: Aircraft) => Validation> = {
+  LAND: validateLand,
+  PUSHBACK: validatePushback,
+  LINE_UP: validateLineUp,
+  TAKEOFF: validateTakeoff,
+};
+
+function simpleOption(world: SimWorld, ac: Aircraft, type: SimpleCommandType): CommandOption {
+  const v = SIMPLE_VALIDATORS[type](world, ac);
+  return v.ok ? { type, label: SIMPLE_LABELS[type], enabled: true } : { type, label: SIMPLE_LABELS[type], enabled: false, reason: v.reason };
+}
+
+function taxiOption(world: SimWorld, ac: Aircraft): CommandOption {
+  const { layout } = world.routes;
+  const ids = ac.flightType === 'ARRIVAL' ? layout.gateIds : layout.holdingPointIds;
+  const destinations: DestinationOption[] = ids.map((id) => {
     const v = validateTaxi(world, ac, id);
-    return v.ok
-      ? { id, label: world.routes.label(id), enabled: true }
-      : { id, label: world.routes.label(id), enabled: false, reason: v.reason };
+    const label = world.routes.label(id);
+    return v.ok ? { id, label, enabled: true } : { id, label, enabled: false, reason: v.reason };
   });
-  const firstEnabled = destinations.some((d) => d.enabled);
-  const taxiReason = destinations[0]?.reason;
-  const options: CommandOption[] = [
-    land.ok ? { type: 'LAND', label: 'Clear to land', enabled: true } : { type: 'LAND', label: 'Clear to land', enabled: false, reason: land.reason },
-    firstEnabled
-      ? { type: 'TAXI', label: 'Taxi to gate', enabled: true, destinations }
-      : { type: 'TAXI', label: 'Taxi to gate', enabled: false, reason: taxiReason ?? 'No gate available.', destinations },
-  ];
-  return options;
+  const label = ac.flightType === 'ARRIVAL' ? 'Taxi to gate' : 'Taxi to holding point';
+  return destinations.some((d) => d.enabled)
+    ? { type: 'TAXI', label, enabled: true, destinations }
+    : { type: 'TAXI', label, enabled: false, reason: destinations[0]?.reason ?? 'No destination available.', destinations };
+}
+
+/** Every command relevant to the aircraft, in flow order, with whether it is currently allowed. */
+export function getCommandOptions(world: SimWorld, ac: Aircraft): CommandOption[] {
+  if (ac.flightType === 'ARRIVAL') return [simpleOption(world, ac, 'LAND'), taxiOption(world, ac)];
+  return [simpleOption(world, ac, 'PUSHBACK'), taxiOption(world, ac), simpleOption(world, ac, 'LINE_UP'), simpleOption(world, ac, 'TAKEOFF')];
 }

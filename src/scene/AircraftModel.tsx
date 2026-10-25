@@ -63,13 +63,6 @@ function AirlinerMesh({ accent }: { accent: string }) {
   );
 }
 
-const STATUS_CLASS: Partial<Record<AircraftStatus, string>> = {
-  APPROACH: 'st-approach',
-  LANDING: 'st-landing',
-  LANDED: 'st-landed',
-  TAXIING: 'st-taxiing',
-  AT_GATE: 'st-gate',
-};
 
 interface Props {
   id: string;
@@ -149,7 +142,7 @@ export function AircraftModel({ id, callsign, status, selected }: Props) {
       <Html position={[0, 16, 0]} center zIndexRange={[20, 0]}>
         <button
           type="button"
-          className={`ac-label ${STATUS_CLASS[status] ?? ''} ${selected ? 'selected' : ''}`}
+          className={`ac-label st-${status.toLowerCase().replace('_', '-')} ${selected ? 'selected' : ''}`}
           onClick={() => controller.select(id)}
         >
           {callsign}

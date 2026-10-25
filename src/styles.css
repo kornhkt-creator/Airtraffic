@@ -329,6 +329,21 @@ button {
 .st-gate {
   background: #475569;
 }
+.st-pushback {
+  background: #6d28d9;
+}
+.st-holding {
+  background: #a16207;
+}
+.st-line-up {
+  background: #c2410c;
+}
+.st-takeoff {
+  background: #be123c;
+}
+.st-departed {
+  background: #475569;
+}
 .st-crashed {
   background: #b91c1c;
 }

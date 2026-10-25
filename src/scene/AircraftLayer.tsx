@@ -6,7 +6,7 @@ export function AircraftLayer() {
   const selectedId = useGameStore((s) => s.selectedId);
   return (
     <group>
-      {aircraft.map((a) => (
+      {aircraft.filter((a) => a.status !== 'DEPARTED').map((a) => (
         <AircraftModel key={a.id} id={a.id} callsign={a.callsign} status={a.status} selected={a.id === selectedId} />
       ))}
     </group>

@@ -41,6 +41,10 @@ export class RouteManager {
     return n;
   }
 
+  neighbors(id: string, kinds?: ReadonlySet<EdgeKind>): { id: string; edge: TaxiEdge }[] {
+    return (this.adjacency.get(id) ?? []).filter((nb) => !kinds || kinds.has(nb.edge.kind)).map((nb) => ({ id: nb.to, edge: nb.edge }));
+  }
+
   edgeBetween(a: string, b: string): TaxiEdge | null {
     return this.adjacency.get(a)?.find((nb) => nb.to === b)?.edge ?? null;
   }

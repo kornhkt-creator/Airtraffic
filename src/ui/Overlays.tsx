@@ -8,14 +8,14 @@ export function StartScreen() {
     <div className="overlay">
       <div className="modal">
         <h1>Airport Traffic Control Simulator 3D</h1>
-        <p className="lead">You are the controller at Northfield Regional. Bring arrivals down safely and park them at a gate.</p>
+        <p className="lead">You are the controller at Northfield Regional. Land arrivals, park them at gates, and get departures airborne — one runway, no collisions.</p>
         <ol className="howto">
           <li>Select an aircraft from the list or click it in the 3D view.</li>
           <li>
-            Issue <b>LAND</b> when the runway is clear. The aircraft leaves the holding pattern and flies the approach.
+            <b>Arrivals:</b> <b>LAND</b> when the runway is clear, then <b>TAXI</b> to a free gate after touchdown.
           </li>
           <li>
-            After touchdown, issue <b>TAXI</b> and pick a free gate.
+            <b>Departures:</b> <b>PUSHBACK</b>, <b>TAXI</b> to the holding point, <b>LINE UP</b>, then <b>TAKEOFF</b>.
           </li>
         </ol>
         <p className="muted small">Camera: left-drag to orbit, right-drag to pan, wheel to zoom. P pauses, Esc deselects.</p>

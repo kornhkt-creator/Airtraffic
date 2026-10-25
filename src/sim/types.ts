@@ -38,7 +38,7 @@ export type AircraftStatus = (typeof AIRCRAFT_STATUSES)[number];
 
 export type GameStatus = 'MENU' | 'RUNNING' | 'PAUSED' | 'GAME_OVER';
 
-export type NavKind = 'none' | 'holding' | 'approach' | 'rollout' | 'taxi';
+export type NavKind = 'none' | 'holding' | 'approach' | 'rollout' | 'taxi' | 'pushback' | 'lineup' | 'takeoff';
 
 export interface NavState {
   path: Path | null;
@@ -47,8 +47,17 @@ export interface NavState {
   /** Speed the aircraft should have when it reaches the end of the path. */
   endSpeed: number;
   kind: NavKind;
+  /** True while moving tail-first along the path (pushback). */
+  reverse: boolean;
   /** Incremented every time a new path is assigned (used by renderers to rebuild route lines). */
   version: number;
+}
+
+export interface PushbackInfo {
+  /** Apron node the aircraft was pushed onto; its taxi route starts here. */
+  apronNodeId: string;
+  /** Where the pushback ends (the aircraft then faces toward apronNodeId). */
+  endPoint: Vec2;
 }
 
 export interface KinematicState {
@@ -80,13 +89,19 @@ export interface Aircraft {
   destinationId: string | null;
   /** Gate the aircraft is parked at. */
   gateId: string | null;
+  /** Holding point the aircraft is waiting at. */
+  holdingPointId: string | null;
+  pushback: PushbackInfo | null;
   onRunway: boolean;
   /** Seconds spent waiting for a controller instruction. */
   waitTime: number;
 }
 
+/** Commands that need no parameter besides the aircraft. */
+export type SimpleCommandType = 'LAND' | 'PUSHBACK' | 'LINE_UP' | 'TAKEOFF';
+
 export type Command =
-  | { type: 'LAND'; aircraftId: string }
+  | { type: SimpleCommandType; aircraftId: string }
   | { type: 'TAXI'; aircraftId: string; destinationId: string };
 
 export type CommandType = Command['type'];
@@ -110,4 +125,5 @@ export interface Alert {
 export type SimEvent =
   | { type: 'STATUS_CHANGED'; aircraftId: string; from: AircraftStatus; to: AircraftStatus }
   | { type: 'RUNWAY_VACATED'; aircraftId: string }
+  | { type: 'PUSHBACK_COMPLETED'; aircraftId: string }
   | { type: 'FLIGHT_COMPLETED'; aircraftId: string };

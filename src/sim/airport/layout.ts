@@ -77,7 +77,7 @@ const node = (id: string, kind: NodeKind, x: number, y: number, label?: string):
 const edge = (from: string, to: string, kind: EdgeKind, name: string): TaxiEdge => ({ from, to, kind, name });
 
 const TAXIWAY_Y = -180;
-const EXIT_Y = -90;
+const EXIT_Y = -100;
 const APRON_Y = -280;
 const GATE_Y = -360;
 

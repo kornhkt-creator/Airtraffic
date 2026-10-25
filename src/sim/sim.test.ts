@@ -8,9 +8,11 @@ import { ScoringSystem } from './ScoringSystem';
 import { AIRCRAFT_STATUSES, type Aircraft, type AircraftStatus } from './types';
 import { distance } from './math';
 
+/** Started game with only its arrival (the random departure is removed so gates are predictable). */
 function startedSim(seed = 7): { sim: Simulation; ac: Aircraft } {
   const sim = new Simulation({ seed });
   sim.start();
+  sim.aircraft = sim.aircraft.filter((a) => a.flightType === 'ARRIVAL');
   const ac = sim.aircraft[0];
   if (!ac) throw new Error('no aircraft spawned');
   return { sim, ac };
@@ -256,8 +258,9 @@ describe('Determinism and reset', () => {
     expect(sim.time).toBe(0);
     expect(sim.scoring.score).toBe(0);
     expect(sim.clock.timeScale).toBe(1);
-    expect(sim.aircraft).toHaveLength(1);
+    expect(sim.aircraft).toHaveLength(2);
     expect(sim.aircraft[0]!.status).toBe('APPROACH');
+    expect(sim.aircraft[1]!.status).toBe('AT_GATE');
     expect(sim.aircraft[0]!.callsign).toBe(ac.callsign);
   });
 

@@ -39,10 +39,29 @@ export const SIM_CONFIG = {
     /** Speed kept at the runway exit when a taxi route is already assigned. */
     exitHandoffSpeed: 5,
     stopDecel: 3,
+    pushbackSpeed: 2,
+    pushbackAccel: 0.5,
+    /** Distance pushed back along the apron lane after leaving the stand. */
+    pushbackLength: 70,
+    /** Other ground traffic closer than this to the pushback area blocks PUSHBACK. */
+    pushbackClearance: 70,
+    /** Line-up point distance past the runway entry node. */
+    lineUpDistance: 70,
+  },
+
+  departure: {
+    takeoffAccel: 2.5,
+    rotationSpeed: 75,
+    climbSpeed: 85,
+    climbRate: 8,
+    climbAltitude: 900,
+    /** Straight-out distance past the runway end at which the flight is handed off (DEPARTED). */
+    handoffDistance: 7000,
   },
 
   scoring: {
     arrivalCompleted: 100,
+    departureCompleted: 100,
   },
 
   alerts: {

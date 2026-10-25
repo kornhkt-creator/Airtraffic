@@ -1,4 +1,4 @@
-import type { Aircraft, Alert, AlertSeverity, Command, CommandResult, GameStatus, SimEvent, Vec3 } from './types';
+import type { Aircraft, Alert, AlertSeverity, Command, CommandResult, GameStatus, SimEvent, Vec2, Vec3 } from './types';
 import type { SimWorld } from './world';
 import type { AircraftView, SimSnapshot } from './snapshot';
 import { SIM_CONFIG } from './config';
@@ -11,7 +11,7 @@ import { executeCommand, getCommandOptions, validateCommand, type CommandOption 
 import { getRunwayOccupants } from './safety/SafetySystem';
 import { updateAircraft } from './aircraft/AircraftAI';
 import { assignPath } from './aircraft/MovementSystem';
-import { createHoldingLoop, glideAltitude } from './aircraft/navigation';
+import { apronNodeOf, createHoldingLoop, glideAltitude } from './aircraft/navigation';
 import type { Path } from './path/Path';
 import { M_TO_FT, MS_TO_KT, toCompassDeg } from './math';
 
@@ -19,7 +19,10 @@ export interface SimulationOptions {
   seed?: number;
 }
 
-const INACTIVE = new Set(['AT_GATE', 'DEPARTED', 'DIVERTED', 'CRASHED']);
+const FINISHED = new Set(['DEPARTED', 'DIVERTED', 'CRASHED']);
+
+/** A flight still needs the controller unless it finished, or is an arrival parked at its gate. */
+const isActive = (a: Aircraft): boolean => !FINISHED.has(a.status) && !(a.flightType === 'ARRIVAL' && a.status === 'AT_GATE');
 
 /**
  * The complete game simulation in plain TypeScript (no React, no Three.js). Rendering reads from
@@ -69,6 +72,7 @@ export class Simulation implements SimWorld {
     if (this.status !== 'MENU') return;
     this.status = 'RUNNING';
     this.spawnArrival();
+    this.spawnDeparture();
   }
 
   restart(seed?: number): void {
@@ -150,34 +154,65 @@ export class Simulation implements SimWorld {
 
   // ---- Spawning --------------------------------------------------------------------------
 
-  spawnArrival(): Aircraft {
-    const number = this.nextAircraftNumber++;
-    const callsign = `${this.rng.pick(SIM_CONFIG.callsignPrefixes)}${this.rng.int(100, 989)}`;
-    const s = this.rng.range(0, this.holdingLoop.length * 0.2);
-    const sample = this.holdingLoop.sample(s);
-    const ac: Aircraft = {
-      id: `AC${number}`,
-      callsign,
-      flightType: 'ARRIVAL',
-      status: 'APPROACH',
-      position: sample.position,
-      altitude: SIM_CONFIG.air.holdingAltitude,
-      heading: sample.heading,
-      speed: SIM_CONFIG.air.approachSpeed,
-      prev: { position: { ...sample.position }, altitude: SIM_CONFIG.air.holdingAltitude, heading: sample.heading },
-      nav: { path: null, s: 0, endSpeed: 0, kind: 'none', version: 0 },
+  private newCallsign(): string {
+    for (;;) {
+      const callsign = `${this.rng.pick(SIM_CONFIG.callsignPrefixes)}${this.rng.int(100, 989)}`;
+      if (!this.aircraft.some((a) => a.callsign === callsign)) return callsign;
+    }
+  }
+
+  private createAircraft(flightType: Aircraft['flightType'], status: Aircraft['status'], position: Vec2, heading: number, altitude: number, speed: number): Aircraft {
+    return {
+      id: `AC${this.nextAircraftNumber++}`,
+      callsign: this.newCallsign(),
+      flightType,
+      status,
+      position: { ...position },
+      altitude,
+      heading,
+      speed,
+      prev: { position: { ...position }, altitude, heading },
+      nav: { path: null, s: 0, endSpeed: 0, kind: 'none', reverse: false, version: 0 },
       routeNodeIds: [],
       pendingRoute: null,
       exitNodeId: null,
       destinationId: null,
       gateId: null,
+      holdingPointId: null,
+      pushback: null,
       onRunway: false,
       waitTime: 0,
     };
+  }
+
+  spawnArrival(): Aircraft {
+    const s = this.rng.range(0, this.holdingLoop.length * 0.2);
+    const sample = this.holdingLoop.sample(s);
+    const ac = this.createAircraft('ARRIVAL', 'APPROACH', sample.position, sample.heading, SIM_CONFIG.air.holdingAltitude, SIM_CONFIG.air.approachSpeed);
     assignPath(ac, this.holdingLoop, 'holding', SIM_CONFIG.air.approachSpeed);
     ac.nav.s = s;
     this.aircraft.push(ac);
-    this.pushAlert('info', `${callsign} is holding and requesting landing clearance.`, ac.id);
+    this.pushAlert('info', `${ac.callsign} is holding and requesting landing clearance.`, ac.id);
+    return ac;
+  }
+
+  /** Gates nobody is parked at, taxiing to, or pushing back from. */
+  freeGates(): string[] {
+    return this.routes.layout.gateIds.filter((id) => !this.aircraft.some((a) => a.gateId === id || a.destinationId === id));
+  }
+
+  /** Places a departure at a free gate (nose-in toward the terminal). Returns null when all gates are taken. */
+  spawnDeparture(gateId?: string): Aircraft | null {
+    const free = this.freeGates();
+    const gate = gateId ?? (free.length > 0 ? this.rng.pick(free) : undefined);
+    if (!gate || !free.includes(gate)) return null;
+    const gatePos = this.routes.node(gate).position;
+    const apronPos = this.routes.node(apronNodeOf(gate, this.routes)).position;
+    const heading = Math.atan2(gatePos.y - apronPos.y, gatePos.x - apronPos.x);
+    const ac = this.createAircraft('DEPARTURE', 'AT_GATE', gatePos, heading, 0, 0);
+    ac.gateId = gate;
+    this.aircraft.push(ac);
+    this.pushAlert('info', `${ac.callsign} at ${this.routes.label(gate)} is requesting pushback.`, ac.id);
     return ac;
   }
 
@@ -191,13 +226,18 @@ export class Simulation implements SimWorld {
       if (!ac) continue;
       if (e.type === 'STATUS_CHANGED' && e.to === 'LANDED') {
         this.pushAlert('info', `${ac.callsign} touched down.`, ac.id);
+      } else if (e.type === 'STATUS_CHANGED' && e.to === 'HOLDING') {
+        this.pushAlert('info', `${ac.callsign} holding short runway ${this.routes.layout.runway.designators[0]}, ready for departure.`, ac.id);
       } else if (e.type === 'RUNWAY_VACATED' && !ac.pendingRoute && ac.status === 'LANDED') {
         this.pushAlert('info', `${ac.callsign} vacated the runway and is waiting for taxi clearance.`, ac.id);
+      } else if (e.type === 'PUSHBACK_COMPLETED' && !ac.pendingRoute) {
+        this.pushAlert('info', `${ac.callsign} pushback complete, ready to taxi.`, ac.id);
       } else if (e.type === 'FLIGHT_COMPLETED') {
-        const points = this.scoring.recordCompletion(ac.id);
+        const points = this.scoring.recordCompletion(ac.id, ac.flightType);
         if (points !== null) {
           const gate = ac.gateId ? this.routes.label(ac.gateId) : 'the gate';
-          this.pushAlert('success', `${ac.callsign} parked at ${gate}. +${points}`, ac.id);
+          const what = ac.flightType === 'ARRIVAL' ? `parked at ${gate}` : 'departed safely';
+          this.pushAlert('success', `${ac.callsign} ${what}. +${points}`, ac.id);
         }
       }
     }
@@ -225,19 +265,28 @@ export class Simulation implements SimWorld {
     const ac = this.getAircraft(aircraftId);
     const path = ac?.nav.path;
     if (!ac || !path) return [];
-    const airborne = ac.nav.kind === 'holding' || ac.nav.kind === 'approach';
-    const points: Vec3[] = path.samplePoints(airborne ? 120 : 8).map(({ s, position }) => ({
-      x: position.x,
-      y: position.y,
-      alt: ac.nav.kind === 'approach' ? glideAltitude(path.length - s) : ac.nav.kind === 'holding' ? SIM_CONFIG.air.holdingAltitude : 0,
-    }));
+    const kind = ac.nav.kind;
+    const d = SIM_CONFIG.departure;
+    const startS = ac.nav.s;
+    const liftoff = (d.rotationSpeed * d.rotationSpeed) / (2 * d.takeoffAccel);
+    const altitudeAt = (s: number): number => {
+      if (kind === 'approach') return glideAltitude(path.length - s);
+      if (kind === 'holding') return SIM_CONFIG.air.holdingAltitude;
+      if (kind === 'takeoff') return Math.min(d.climbAltitude, ac.altitude + Math.max(0, s - startS - (ac.altitude > 0 ? 0 : liftoff)) * (d.climbRate / d.climbSpeed));
+      return 0;
+    };
+    const airborne = kind === 'holding' || kind === 'approach' || kind === 'takeoff';
+    const points: Vec3[] = path.samplePoints(airborne ? 120 : 8).map(({ s, position }) => ({ x: position.x, y: position.y, alt: altitudeAt(s) }));
     if (ac.pendingRoute) {
-      for (const p of this.routes.positions(ac.pendingRoute.slice(1))) points.push({ x: p.x, y: p.y, alt: 0 });
+      // A rollout ends on the route's first node; a pushback ends short of it.
+      const rest = ac.status === 'PUSHBACK' ? ac.pendingRoute : ac.pendingRoute.slice(1);
+      for (const p of this.routes.positions(rest)) points.push({ x: p.x, y: p.y, alt: 0 });
     }
     return points;
   }
 
   private describeTarget(ac: Aircraft): string {
+    const rwy = this.routes.layout.runway.designators[0];
     switch (ac.status) {
       case 'APPROACH':
         return 'Holding — awaiting landing clearance';
@@ -250,8 +299,21 @@ export class Simulation implements SimWorld {
       }
       case 'TAXIING':
         return ac.destinationId ? `Taxiing to ${this.routes.label(ac.destinationId)} via ${this.routes.describeRoute(ac.routeNodeIds)}` : 'Taxiing';
-      case 'AT_GATE':
-        return ac.gateId ? `Parked at ${this.routes.label(ac.gateId)}` : 'Parked';
+      case 'AT_GATE': {
+        const gate = ac.gateId ? this.routes.label(ac.gateId) : 'gate';
+        return ac.flightType === 'DEPARTURE' ? `At ${gate} — ready for pushback` : `Parked at ${gate}`;
+      }
+      case 'PUSHBACK':
+        if (ac.nav.path) return ac.pendingRoute && ac.destinationId ? `Pushing back, then taxi to ${this.routes.label(ac.destinationId)}` : 'Pushing back';
+        return 'Pushback complete — awaiting taxi';
+      case 'HOLDING':
+        return `Holding short RWY ${rwy} at ${ac.holdingPointId ? this.routes.label(ac.holdingPointId) : 'holding point'}`;
+      case 'LINE_UP':
+        return ac.nav.path ? `Lining up RWY ${rwy}` : `Lined up RWY ${rwy} — awaiting takeoff clearance`;
+      case 'TAKEOFF':
+        return ac.altitude > 0 ? 'Climbing out' : `Takeoff roll RWY ${rwy}`;
+      case 'DEPARTED':
+        return 'Departed — handed off';
       default:
         return ac.status;
     }
@@ -278,7 +340,7 @@ export class Simulation implements SimWorld {
       timeScale: this.clock.timeScale,
       score: this.scoring.score,
       completedFlights: this.scoring.completedFlights,
-      activeFlights: this.aircraft.filter((a) => !INACTIVE.has(a.status)).length,
+      activeFlights: this.aircraft.filter(isActive).length,
       aircraft: views,
       alerts: this.alerts.map((a) => ({ ...a })),
       runwayOccupiedBy: getRunwayOccupants(this.aircraft).map((a) => a.callsign),

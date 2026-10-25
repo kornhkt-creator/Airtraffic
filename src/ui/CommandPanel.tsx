@@ -86,6 +86,7 @@ function CommandControl({ aircraftId, option }: { aircraftId: string; option: Co
     );
   }
 
+  const type = option.type;
   return (
     <div className={`command-group ${option.enabled ? '' : 'disabled'}`}>
       <button
@@ -93,9 +94,9 @@ function CommandControl({ aircraftId, option }: { aircraftId: string; option: Co
         className="btn cmd primary"
         disabled={!option.enabled}
         title={option.reason ?? option.label}
-        onClick={() => controller.command({ type: 'LAND', aircraftId })}
+        onClick={() => controller.command({ type, aircraftId })}
       >
-        {option.type} — {option.label}
+        {type.replace('_', ' ')} — {option.label}
       </button>
       {!option.enabled && option.reason && <div className="reason">{option.reason}</div>}
     </div>

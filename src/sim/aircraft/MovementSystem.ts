@@ -1,6 +1,6 @@
 import type { Aircraft, NavKind } from '../types';
 import type { Path } from '../path/Path';
-import { mod } from '../math';
+import { mod, normalizeAngle } from '../math';
 import { SIM_CONFIG } from '../config';
 
 /** Distance at which an aircraft is considered to have reached the end of its path. */
@@ -10,11 +10,12 @@ const CREEP_SPEED = 0.5;
 /** Braking may exceed the planned deceleration by this factor to absorb discretization error. */
 const BRAKE_MARGIN = 2;
 
-export function assignPath(ac: Aircraft, path: Path | null, kind: NavKind, endSpeed: number): void {
+export function assignPath(ac: Aircraft, path: Path | null, kind: NavKind, endSpeed: number, reverse = false): void {
   ac.nav.path = path;
   ac.nav.s = 0;
   ac.nav.kind = path ? kind : 'none';
   ac.nav.endSpeed = endSpeed;
+  ac.nav.reverse = path ? reverse : false;
   ac.nav.version += 1;
 }
 
@@ -55,7 +56,7 @@ export function advanceAlongPath(ac: Aircraft, dt: number, speedCap = Infinity):
 
   const sample = path.sample(nav.s);
   ac.position = sample.position;
-  ac.heading = sample.heading;
+  ac.heading = nav.reverse ? normalizeAngle(sample.heading + Math.PI) : sample.heading;
   return finished;
 }
 

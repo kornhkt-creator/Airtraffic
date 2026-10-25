@@ -23,7 +23,7 @@ npm run build
 ## Milestones
 
 - [x] 1. Vertical slice: one airport, one arrival, smooth navigation, selection, LAND and TAXI commands
-- [ ] 2. Departures: pushback, taxi to holding point, line up, takeoff
+- [x] 2. Departures: pushback, taxi to holding point, line up, takeoff
 - [ ] 3. Spawning multiple flights, difficulty curve, diversions
 - [ ] 4. Safety: separation warnings, runway incursions, collisions, GAME_OVER
 - [ ] 5. Scoring penalties, end screen, polish, Playwright smoke test
