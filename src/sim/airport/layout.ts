@@ -8,7 +8,7 @@ import type { Vec2 } from '../types';
  * - The renderer maps sim (x, y, alt) to Three.js (x, alt, -y).
  *
  * Operations in the MVP use runway 09 only: arrivals land eastbound, departures take off eastbound.
- * The parallel taxiway A runs 180 m south of the runway; the apron and gates lie south of it.
+ * The parallel taxiway A runs 200 m south of the runway; the apron and gates lie south of it.
  */
 
 export type NodeKind = 'runway' | 'holdingPoint' | 'exit' | 'taxiway' | 'apron' | 'gate';
@@ -76,10 +76,28 @@ const node = (id: string, kind: NodeKind, x: number, y: number, label?: string):
 
 const edge = (from: string, to: string, kind: EdgeKind, name: string): TaxiEdge => ({ from, to, kind, name });
 
-const TAXIWAY_Y = -180;
-const EXIT_Y = -100;
-const APRON_Y = -280;
-const GATE_Y = -360;
+/**
+ * North-south positions (sim y, meters) of the airport's east-west features. Spacing is sized for
+ * the game's enlarged aircraft (see SIM_CONFIG.aircraft): noses and tails stay behind hold-short
+ * lines and parked tails clear the apron taxi lane.
+ */
+export const LAYOUT_Y = {
+  /** Exit / holding nodes just clear of the hold-short line. */
+  exit: -125,
+  /** Parallel taxiway A. */
+  taxiway: -200,
+  /** Apron taxi lane in front of the stands. */
+  apron: -310,
+  /** Stand positions (aircraft reference point when parked). */
+  gate: -395,
+  /** North face of the terminal building. */
+  terminalFront: -440,
+} as const;
+
+const TAXIWAY_Y = LAYOUT_Y.taxiway;
+const EXIT_Y = LAYOUT_Y.exit;
+const APRON_Y = LAYOUT_Y.apron;
+const GATE_Y = LAYOUT_Y.gate;
 
 export const AIRPORT: AirportLayout = {
   name: 'Northfield Regional',
@@ -90,7 +108,7 @@ export const AIRPORT: AirportLayout = {
     end: { x: 1000, y: 0 },
     heading: 0,
     length: 2000,
-    width: 45,
+    width: 60,
     touchdown: { x: -850, y: 0 },
     exits: [
       { runwayNodeId: 'R2', exitNodeId: 'X2', name: 'A2' },
@@ -161,5 +179,5 @@ export const AIRPORT: AirportLayout = {
   ],
   gateIds: ['G1', 'G2', 'G3', 'G4'],
   holdingPointIds: ['H1'],
-  holdShortOffset: 75,
+  holdShortOffset: 80,
 };

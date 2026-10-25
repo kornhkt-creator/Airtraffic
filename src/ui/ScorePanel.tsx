@@ -1,6 +1,12 @@
 import { useGame, useGameStore } from '../game/GameContext';
 import { SIM_CONFIG } from '../sim/config';
 import { formatClock } from './format';
+import type { CameraView } from '../scene/cameraPresets';
+
+const CAMERA_VIEWS: { view: CameraView; label: string; title: string }[] = [
+  { view: 'airport', label: 'Airport', title: 'Camera on the airport' },
+  { view: 'airspace', label: 'Airspace', title: 'Camera on the holding stack and approach' },
+];
 
 /** Top HUD: score, time, flights and simulation controls. */
 export function ScorePanel() {
@@ -14,6 +20,7 @@ export function ScorePanel() {
   const level = useGameStore((s) => s.snapshot.difficultyLevel);
   const timeScale = useGameStore((s) => s.snapshot.timeScale);
   const runway = useGameStore((s) => s.snapshot.runwayOccupiedBy);
+  const cameraView = useGameStore((s) => s.cameraView);
   const inGame = status === 'RUNNING' || status === 'PAUSED';
 
   return (
@@ -48,9 +55,13 @@ export function ScorePanel() {
             </button>
           ))}
         </div>
-        <button type="button" className="btn" onClick={() => controller.resetCamera()} title="Reset camera">
-          ⌖ View
-        </button>
+        <div className="segmented" role="group" aria-label="Camera view">
+          {CAMERA_VIEWS.map(({ view, label, title }) => (
+            <button type="button" key={view} className={view === cameraView ? 'active' : ''} title={title} onClick={() => controller.setCameraView(view)}>
+              {label}
+            </button>
+          ))}
+        </div>
         <button type="button" className="btn" disabled={!inGame} onClick={() => controller.restart()}>
           ↻ Restart
         </button>

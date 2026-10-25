@@ -5,6 +5,7 @@ import type { Group } from 'three';
 import { useGame } from '../game/GameContext';
 import { angleDiff, clamp, lerp, lerpAngle } from '../sim/math';
 import type { AircraftStatus } from '../sim/types';
+import { SIM_CONFIG } from '../sim/config';
 
 const LIVERY: Record<string, string> = {
   SKL: '#1e88e5',
@@ -64,17 +65,23 @@ function AirlinerMesh({ accent }: { accent: string }) {
 }
 
 
+/** The procedural mesh is ~38 m long; scale it to the configured game aircraft size. */
+const MODEL_SCALE = SIM_CONFIG.aircraft.length / 38;
+const MODEL_HALF_LENGTH = 19;
+
 interface Props {
   id: string;
   callsign: string;
   status: AircraftStatus;
   selected: boolean;
+  showLabel: boolean;
 }
 
-export function AircraftModel({ id, callsign, status, selected }: Props) {
+export function AircraftModel({ id, callsign, status, selected, showLabel }: Props) {
   const controller = useGame();
   const root = useRef<Group>(null);
   const body = useRef<Group>(null);
+  const label = useRef<HTMLButtonElement>(null);
   const lastHeading = useRef<number | null>(null);
   const bank = useRef(0);
   const [hovered, setHovered] = useState(false);
@@ -102,9 +109,19 @@ export function AircraftModel({ id, callsign, status, selected }: Props) {
       body.current.rotation.z = ac.status === 'LANDING' && alt > 2 ? 0.03 : 0;
     }
 
-    // Keep distant aircraft readable.
+    // Keep distant airborne aircraft readable; ground traffic stays near true size so it fits the taxiways.
     const distance = state.camera.position.distanceTo(g.position);
-    g.scale.setScalar(clamp(distance / 900, 1, 10));
+    const boost = clamp(distance / 1800, 1, alt > 30 ? 6 : 1.6);
+    const scale = MODEL_SCALE * boost;
+    g.scale.setScalar(scale);
+
+    // Float the callsign just above the aircraft's on-screen footprint so it never covers it.
+    if (label.current) {
+      const fov = 'fov' in state.camera ? (state.camera.fov as number) : 45;
+      const pxPerMeter = state.size.height / (2 * Math.tan((fov * Math.PI) / 360) * Math.max(distance, 1));
+      const offset = clamp(MODEL_HALF_LENGTH * scale * pxPerMeter, 4, 160) + 6;
+      label.current.style.transform = `translate(-50%, calc(-100% - ${offset.toFixed(1)}px))`;
+    }
   });
 
   const select = (e: ThreeEvent<MouseEvent>) => {
@@ -135,19 +152,22 @@ export function AircraftModel({ id, callsign, status, selected }: Props) {
       </group>
       {(selected || hovered) && (
         <mesh position={[0, 0.4, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[24, 27, 48]} />
+          <ringGeometry args={[24, 26.5, 48]} />
           <meshBasicMaterial color={selected ? '#22d3ee' : '#ffffff'} transparent opacity={0.9} />
         </mesh>
       )}
-      <Html position={[0, 16, 0]} center zIndexRange={[20, 0]}>
-        <button
-          type="button"
-          className={`ac-label st-${status.toLowerCase().replace('_', '-')} ${selected ? 'selected' : ''}`}
-          onClick={() => controller.select(id)}
-        >
-          {callsign}
-        </button>
-      </Html>
+      {(showLabel || selected || hovered) && (
+        <Html zIndexRange={[20, 0]}>
+          <button
+            ref={label}
+            type="button"
+            className={`ac-label st-${status.toLowerCase().replace('_', '-')} ${selected ? 'selected' : ''}`}
+            onClick={() => controller.select(id)}
+          >
+            {callsign}
+          </button>
+        </Html>
+      )}
     </group>
   );
 }

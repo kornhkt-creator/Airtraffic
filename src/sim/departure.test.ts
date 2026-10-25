@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from './Simulation';
 import { AIRPORT } from './airport/layout';
+import { SIM_CONFIG } from './config';
 import { angleDiff, distance, dot, fromAngle, sub } from './math';
 import type { Aircraft } from './types';
 
@@ -74,8 +75,8 @@ describe('Departure lifecycle', () => {
     runUntil(sim, () => dep.status === 'HOLDING', 600, track);
     expect(distance(dep.position, sim.routes.node('H1').position)).toBeLessThan(0.5);
     expect(dep.holdingPointId).toBe('H1');
-    // The nose (≈20 m ahead of the reference point) stays behind the hold-short line.
-    expect(dep.position.y + 20).toBeLessThan(-AIRPORT.holdShortOffset);
+    // The nose (half a fuselage ahead of the reference point) stays behind the hold-short line.
+    expect(dep.position.y + SIM_CONFIG.aircraft.length / 2).toBeLessThan(-AIRPORT.holdShortOffset);
     expect(sim.snapshot().runwayOccupiedBy).toHaveLength(0);
 
     // Line up: occupies the runway and ends aligned with it.

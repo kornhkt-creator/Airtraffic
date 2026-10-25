@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { DoubleSide, Object3D, type InstancedMesh, type Texture } from 'three';
-import { AIRPORT } from '../sim/airport/layout';
+import { AIRPORT, LAYOUT_Y } from '../sim/airport/layout';
 import { Rng } from '../sim/rng';
 import { toScene } from './coords';
 import { makeTextTexture } from './textures';
@@ -13,6 +13,13 @@ const H = {
   runway: 0.24,
   marking: 0.27,
 };
+
+/** Paved widths sized for the game's enlarged aircraft. */
+const TAXIWAY_WIDTH = 32;
+const STAND_WIDTH = 26;
+
+/** Terminal building footprint (sim coordinates). */
+const TERMINAL = { halfWidth: 430, depth: 70, height: 20 };
 
 const COLORS = {
   grass: '#5d7f45',
@@ -174,7 +181,7 @@ function Taxiways() {
         const a = nodes.get(e.from)?.position;
         const b = nodes.get(e.to)?.position;
         if (!a || !b) return null;
-        const width = e.kind === 'stand' ? 18 : 23;
+        const width = e.kind === 'stand' ? STAND_WIDTH : TAXIWAY_WIDTH;
         return (
           <group key={`${e.from}-${e.to}`}>
             {e.kind !== 'apron' && e.kind !== 'stand' && <Strip a={a} b={b} width={width} color={COLORS.asphalt} height={H.taxiway} />}
@@ -184,7 +191,7 @@ function Taxiways() {
       })}
       {jointNodes.map((n) => (
         <mesh key={n.id} position={toScene(n.position, H.taxiway - 0.005)} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-          <circleGeometry args={[n.kind === 'apron' ? 12 : 20, 32]} />
+          <circleGeometry args={[n.kind === 'apron' ? STAND_WIDTH / 2 : TAXIWAY_WIDTH * 0.8, 32]} />
           <meshStandardMaterial color={n.kind === 'apron' ? COLORS.concrete : COLORS.asphalt} />
         </mesh>
       ))}
@@ -201,20 +208,24 @@ function HoldShortMarkings() {
     if (!rwyNode) continue;
     const x = rwyNode.position.x;
     // Two solid lines (runway side) and two dashed lines (taxiway side)
-    rects.push({ x, y: y + 1.5, sx: 23, sy: 0.4 }, { x, y: y + 0.6, sx: 23, sy: 0.4 });
-    for (let k = -2; k <= 2; k++) rects.push({ x: x + k * 4.5, y: y - 0.6, sx: 2.5, sy: 0.4 }, { x: x + k * 4.5, y: y - 1.5, sx: 2.5, sy: 0.4 });
+    rects.push({ x, y: y + 1.5, sx: TAXIWAY_WIDTH, sy: 0.5 }, { x, y: y + 0.6, sx: TAXIWAY_WIDTH, sy: 0.5 });
+    for (let k = -3; k <= 3; k++) rects.push({ x: x + k * 4.5, y: y - 0.6, sx: 2.5, sy: 0.5 }, { x: x + k * 4.5, y: y - 1.5, sx: 2.5, sy: 0.5 });
   }
   return <FlatRects rects={rects} color={COLORS.yellow} height={H.taxiLine + 0.01} />;
 }
 
 function ApronAndStands() {
   const gates = AIRPORT.nodes.filter((n) => n.kind === 'gate');
+  const north = LAYOUT_Y.taxiway - TAXIWAY_WIDTH / 2;
+  const south = LAYOUT_Y.terminalFront;
+  // Nose-in parking: the stop bar sits under the nose (half a fuselage south of the stand point).
+  const stopBarY = LAYOUT_Y.gate - 34;
   return (
     <group>
-      <FlatRects rects={[{ x: 0, y: -318, sx: 860, sy: 180 }]} color={COLORS.concrete} height={H.apron} />
-      <FlatRects rects={gates.map((g) => ({ x: g.position.x, y: g.position.y - 6, sx: 10, sy: 0.6 }))} color={COLORS.yellow} height={H.taxiLine} />
+      <FlatRects rects={[{ x: 0, y: (north + south) / 2, sx: TERMINAL.halfWidth * 2 + 20, sy: north - south }]} color={COLORS.concrete} height={H.apron} />
+      <FlatRects rects={gates.map((g) => ({ x: g.position.x, y: stopBarY, sx: 14, sy: 0.8 }))} color={COLORS.yellow} height={H.taxiLine} />
       {gates.map((g, i) => (
-        <GroundText key={g.id} text={String(i + 1)} x={g.position.x + 14} y={g.position.y + 20} upAngle={Math.PI / 2} width={8} length={12} color={COLORS.yellow} />
+        <GroundText key={g.id} text={String(i + 1)} x={g.position.x + 24} y={LAYOUT_Y.apron - 30} upAngle={Math.PI / 2} width={12} length={18} color={COLORS.yellow} />
       ))}
     </group>
   );
@@ -222,30 +233,33 @@ function ApronAndStands() {
 
 function Terminal() {
   const gates = AIRPORT.nodes.filter((n) => n.kind === 'gate');
+  const centerY = LAYOUT_Y.terminalFront - TERMINAL.depth / 2;
+  const bridgeLength = 22;
   return (
     <group>
       {/* Main hall */}
-      <mesh position={toScene({ x: 0, y: -445 }, 9)} castShadow receiveShadow>
-        <boxGeometry args={[840, 18, 60]} />
+      <mesh position={toScene({ x: 0, y: centerY }, TERMINAL.height / 2)} castShadow receiveShadow>
+        <boxGeometry args={[TERMINAL.halfWidth * 2, TERMINAL.height, TERMINAL.depth]} />
         <meshStandardMaterial color={COLORS.terminal} />
       </mesh>
-      <mesh position={toScene({ x: 0, y: -414.8 }, 10)}>
-        <planeGeometry args={[820, 8]} />
+      {/* Glass facade on the airside (north) face */}
+      <mesh position={toScene({ x: 0, y: LAYOUT_Y.terminalFront + 0.2 }, TERMINAL.height / 2 + 1)} rotation={[0, Math.PI, 0]}>
+        <planeGeometry args={[TERMINAL.halfWidth * 2 - 20, 9]} />
         <meshStandardMaterial color={COLORS.glass} metalness={0.4} roughness={0.2} />
       </mesh>
-      <mesh position={toScene({ x: 0, y: -445 }, 19)} castShadow>
-        <boxGeometry args={[850, 2, 66]} />
+      <mesh position={toScene({ x: 0, y: centerY }, TERMINAL.height + 1)} castShadow>
+        <boxGeometry args={[TERMINAL.halfWidth * 2 + 10, 2, TERMINAL.depth + 6]} />
         <meshStandardMaterial color={COLORS.roof} />
       </mesh>
-      {/* Jet bridges */}
+      {/* Jet bridges reach from the terminal to the parked aircraft's forward door */}
       {gates.map((g) => (
         <group key={g.id}>
-          <mesh position={toScene({ x: g.position.x + 16, y: -397 }, 5)} castShadow>
-            <boxGeometry args={[4, 4, 32]} />
+          <mesh position={toScene({ x: g.position.x + 12, y: LAYOUT_Y.terminalFront + bridgeLength / 2 }, 8)} castShadow>
+            <boxGeometry args={[5, 5, bridgeLength]} />
             <meshStandardMaterial color="#9aa1aa" />
           </mesh>
-          <mesh position={toScene({ x: g.position.x + 16, y: -382 }, 1.5)}>
-            <boxGeometry args={[1, 3, 1]} />
+          <mesh position={toScene({ x: g.position.x + 12, y: LAYOUT_Y.terminalFront + bridgeLength - 2 }, 3)}>
+            <boxGeometry args={[1.2, 6, 1.2]} />
             <meshStandardMaterial color="#555" />
           </mesh>
         </group>
@@ -255,7 +269,7 @@ function Terminal() {
 }
 
 function ControlTower() {
-  const p = { x: 560, y: -440 };
+  const p = { x: TERMINAL.halfWidth + 140, y: LAYOUT_Y.terminalFront - 30 };
   return (
     <group position={toScene(p)}>
       <mesh position={[0, 5, 0]} castShadow receiveShadow>
@@ -284,7 +298,7 @@ function ControlTower() {
 
 function Hangar() {
   return (
-    <group position={toScene({ x: -760, y: -400 })}>
+    <group position={toScene({ x: -TERMINAL.halfWidth - 340, y: LAYOUT_Y.terminalFront })}>
       <mesh position={[0, 12, 0]} castShadow receiveShadow>
         <boxGeometry args={[120, 24, 80]} />
         <meshStandardMaterial color="#b9bec4" />
@@ -313,7 +327,7 @@ function Trees() {
     while (placed < count) {
       const x = rng.range(-3500, 3500);
       const y = rng.range(-2200, 1500);
-      const inAirport = x > -1250 && x < 1250 && y > -620 && y < 160;
+      const inAirport = x > -1250 && x < 1250 && y > LAYOUT_Y.terminalFront - 220 && y < 160;
       if (inAirport) continue;
       const s = rng.range(0.7, 1.5);
       dummy.position.set(x, 6 * s, -y);
@@ -343,8 +357,8 @@ function Signs() {
         return (
           <Sign
             key={e.name}
-            x={n.position.x - 22}
-            y={-AIRPORT.holdShortOffset - 4}
+            x={n.position.x - TAXIWAY_WIDTH}
+            y={-AIRPORT.holdShortOffset - 6}
             facing={-Math.PI / 2}
             panels={[
               { text: e.name, kind: 'location' },
@@ -353,8 +367,8 @@ function Signs() {
           />
         );
       })}
-      <Sign x={-230} y={-160} facing={0} panels={[{ text: 'A', kind: 'location' }, { text: '← B', kind: 'direction' }]} />
-      <Sign x={230} y={-160} facing={Math.PI} panels={[{ text: 'A', kind: 'location' }, { text: 'C →', kind: 'direction' }]} />
+      <Sign x={-240} y={LAYOUT_Y.taxiway + 26} facing={0} panels={[{ text: 'A', kind: 'location' }, { text: '← B', kind: 'direction' }]} />
+      <Sign x={240} y={LAYOUT_Y.taxiway + 26} facing={Math.PI} panels={[{ text: 'A', kind: 'location' }, { text: 'C →', kind: 'direction' }]} />
     </group>
   );
 }

@@ -7,7 +7,15 @@ export function AircraftLayer() {
   return (
     <group>
       {aircraft.filter((a) => a.status !== 'DEPARTED').map((a) => (
-        <AircraftModel key={a.id} id={a.id} callsign={a.callsign} status={a.status} selected={a.id === selectedId} />
+        <AircraftModel
+          key={a.id}
+          id={a.id}
+          callsign={a.callsign}
+          status={a.status}
+          selected={a.id === selectedId}
+          // Parked arrivals need no attention; their label returns on hover or selection.
+          showLabel={!(a.flightType === 'ARRIVAL' && a.status === 'AT_GATE')}
+        />
       ))}
     </group>
   );

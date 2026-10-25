@@ -2,10 +2,13 @@ import { createStore, type StoreApi } from 'zustand/vanilla';
 import { Simulation } from '../sim/Simulation';
 import type { Command, CommandResult } from '../sim/types';
 import type { SimSnapshot } from '../sim/snapshot';
+import type { CameraView } from '../scene/cameraPresets';
 
 export interface UiState {
   snapshot: SimSnapshot;
   selectedId: string | null;
+  cameraView: CameraView;
+  /** Bumped to re-apply the current view preset (e.g. after the player orbited away). */
   cameraResetToken: number;
 }
 
@@ -23,7 +26,7 @@ export class GameController {
 
   constructor(seed = Date.now() % 100000) {
     this.sim = new Simulation({ seed });
-    this.store = createStore<UiState>(() => ({ snapshot: this.sim.snapshot(), selectedId: null, cameraResetToken: 0 }));
+    this.store = createStore<UiState>(() => ({ snapshot: this.sim.snapshot(), selectedId: null, cameraView: 'airport', cameraResetToken: 0 }));
   }
 
   /** Called once per rendered frame with the real elapsed time. */
@@ -72,7 +75,8 @@ export class GameController {
     return result;
   }
 
-  resetCamera(): void {
-    this.store.setState((s) => ({ cameraResetToken: s.cameraResetToken + 1 }));
+  /** Switches to a camera preset; choosing the current one again snaps back to it. */
+  setCameraView(view: CameraView): void {
+    this.store.setState((s) => ({ cameraView: view, cameraResetToken: s.cameraResetToken + 1 }));
   }
 }

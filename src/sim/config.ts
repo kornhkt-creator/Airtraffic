@@ -10,6 +10,15 @@ export const SIM_CONFIG = {
   maxStepsPerFrame: 40,
   timeScales: [1, 2, 4] as const,
 
+  /**
+   * Game aircraft size (meters). Deliberately about twice a real narrow-body so aircraft stay
+   * readable from the overview camera; the airport layout spacing is sized for it.
+   */
+  aircraft: {
+    length: 76,
+    wingspan: 68,
+  },
+
   air: {
     approachSpeed: 70,
     touchdownSpeed: 65,
