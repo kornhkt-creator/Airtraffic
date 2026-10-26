@@ -6,7 +6,7 @@ import { transition } from './aircraft/AircraftStateMachine';
 import { assignPath } from './aircraft/MovementSystem';
 import { beginTaxi } from './aircraft/AircraftAI';
 import { apronNodeOf, planLanding, planLineUp, planPushback, planTakeoff } from './aircraft/navigation';
-import { isRunwayAvailableFor } from './safety/SafetySystem';
+import { isRunwayAvailableFor, runwayOf } from './safety/SafetySystem';
 import { levelAltitude } from './aircraft/holdingStack';
 
 export type Validation = { ok: true; route?: string[] } | { ok: false; reason: string };
@@ -37,8 +37,9 @@ function checkGame(world: SimWorld): Validation | null {
 }
 
 function checkRunway(world: SimWorld, ac: Aircraft): Validation | null {
-  const runway = isRunwayAvailableFor(world.aircraft, ac);
-  return runway.ok ? null : reject(`Runway ${world.routes.layout.runway.id} is occupied by ${runway.occupant.callsign}.`);
+  const { layout } = world.routes;
+  const runway = isRunwayAvailableFor(world.aircraft, ac, layout);
+  return runway.ok ? null : reject(`Runway ${runwayOf(ac, layout).designators[0]} is occupied by ${runway.occupant.callsign}.`);
 }
 
 function requireStatus(ac: Aircraft, status: Aircraft['status'], action: string): Validation | null {
@@ -123,9 +124,21 @@ export function validateTakeoff(world: SimWorld, ac: Aircraft): Validation {
   const base = checkGame(world) ?? requireType(ac, 'DEPARTURE', 'takeoff clearance') ?? requireStatus(ac, 'LINE_UP', 'takeoff clearance');
   if (base) return base;
   if (ac.nav.path) return reject(`${ac.callsign} is still lining up.`);
-  const heading = fromAngle(world.routes.layout.runway.heading);
+  const heading = fromAngle(world.routes.layout.departureRunway.heading);
   if (dot(fromAngle(ac.heading), heading) < 0.99) return reject(`${ac.callsign} is not aligned with the runway.`);
   return checkRunway(world, ac) ?? { ok: true };
+}
+
+export function validateHold(world: SimWorld, ac: Aircraft): Validation {
+  const base = checkGame(world) ?? requireStatus(ac, 'TAXIING', 'hold position');
+  if (base) return base;
+  return ac.taxiHold ? reject(`${ac.callsign} is already holding position.`) : { ok: true };
+}
+
+export function validateContinue(world: SimWorld, ac: Aircraft): Validation {
+  const base = checkGame(world) ?? requireStatus(ac, 'TAXIING', 'continue taxi');
+  if (base) return base;
+  return ac.taxiHold ? { ok: true } : reject(`${ac.callsign} is not holding position.`);
 }
 
 export function validateCommand(world: SimWorld, cmd: Command): Validation {
@@ -142,6 +155,10 @@ export function validateCommand(world: SimWorld, cmd: Command): Validation {
       return validateLineUp(world, ac);
     case 'TAKEOFF':
       return validateTakeoff(world, ac);
+    case 'HOLD':
+      return validateHold(world, ac);
+    case 'CONTINUE':
+      return validateContinue(world, ac);
   }
 }
 
@@ -150,7 +167,7 @@ export function executeCommand(world: SimWorld, cmd: Command, validation: Valida
   const ac = world.getAircraft(cmd.aircraftId);
   if (!ac) throw new Error(`Unknown aircraft ${cmd.aircraftId}`);
   const emit = world.emit.bind(world);
-  const rwy = world.routes.layout.runway.designators[0];
+  const rwy = runwayOf(ac, world.routes.layout).designators[0];
   switch (cmd.type) {
     case 'LAND': {
       transition(ac, 'LANDING', emit);
@@ -201,6 +218,14 @@ export function executeCommand(world: SimWorld, cmd: Command, validation: Valida
       ac.waitTime = 0;
       return `${ac.callsign}, runway ${rwy}, cleared for takeoff.`;
     }
+    case 'HOLD': {
+      ac.taxiHold = true;
+      return `${ac.callsign}, hold position.`;
+    }
+    case 'CONTINUE': {
+      ac.taxiHold = false;
+      return `${ac.callsign}, continue taxi.`;
+    }
   }
 }
 
@@ -209,6 +234,8 @@ const SIMPLE_LABELS: Record<SimpleCommandType, string> = {
   PUSHBACK: 'Approve pushback',
   LINE_UP: 'Line up and wait',
   TAKEOFF: 'Clear for takeoff',
+  HOLD: 'Hold position',
+  CONTINUE: 'Continue taxi',
 };
 
 const SIMPLE_VALIDATORS: Record<SimpleCommandType, (world: SimWorld, ac: Aircraft) => Validation> = {
@@ -216,6 +243,8 @@ const SIMPLE_VALIDATORS: Record<SimpleCommandType, (world: SimWorld, ac: Aircraf
   PUSHBACK: validatePushback,
   LINE_UP: validateLineUp,
   TAKEOFF: validateTakeoff,
+  HOLD: validateHold,
+  CONTINUE: validateContinue,
 };
 
 function simpleOption(world: SimWorld, ac: Aircraft, type: SimpleCommandType): CommandOption {
@@ -239,6 +268,8 @@ function taxiOption(world: SimWorld, ac: Aircraft): CommandOption {
 
 /** Every command relevant to the aircraft, in flow order, with whether it is currently allowed. */
 export function getCommandOptions(world: SimWorld, ac: Aircraft): CommandOption[] {
-  if (ac.flightType === 'ARRIVAL') return [simpleOption(world, ac, 'LAND'), taxiOption(world, ac)];
-  return [simpleOption(world, ac, 'PUSHBACK'), taxiOption(world, ac), simpleOption(world, ac, 'LINE_UP'), simpleOption(world, ac, 'TAKEOFF')];
+  // Hold and continue share one slot: whichever applies right now.
+  const hold = simpleOption(world, ac, ac.taxiHold ? 'CONTINUE' : 'HOLD');
+  if (ac.flightType === 'ARRIVAL') return [simpleOption(world, ac, 'LAND'), taxiOption(world, ac), hold];
+  return [simpleOption(world, ac, 'PUSHBACK'), taxiOption(world, ac), hold, simpleOption(world, ac, 'LINE_UP'), simpleOption(world, ac, 'TAKEOFF')];
 }

@@ -15,6 +15,7 @@ export function AircraftLayer() {
           selected={a.id === selectedId}
           // Parked arrivals need no attention; their label returns on hover or selection.
           showLabel={!(a.flightType === 'ARRIVAL' && a.status === 'AT_GATE')}
+          conflict={a.conflict}
         />
       ))}
     </group>

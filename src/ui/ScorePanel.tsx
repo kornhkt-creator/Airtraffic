@@ -1,12 +1,6 @@
 import { useGame, useGameStore } from '../game/GameContext';
 import { SIM_CONFIG } from '../sim/config';
 import { formatClock } from './format';
-import type { CameraView } from '../scene/cameraPresets';
-
-const CAMERA_VIEWS: { view: CameraView; label: string; title: string }[] = [
-  { view: 'airport', label: 'Airport', title: 'Camera on the airport' },
-  { view: 'airspace', label: 'Airspace', title: 'Camera on the holding stack and approach' },
-];
 
 /** Top HUD: score, time, flights and simulation controls. */
 export function ScorePanel() {
@@ -19,8 +13,7 @@ export function ScorePanel() {
   const diversions = useGameStore((s) => s.snapshot.diversions);
   const level = useGameStore((s) => s.snapshot.difficultyLevel);
   const timeScale = useGameStore((s) => s.snapshot.timeScale);
-  const runway = useGameStore((s) => s.snapshot.runwayOccupiedBy);
-  const cameraView = useGameStore((s) => s.cameraView);
+  const runways = useGameStore((s) => s.snapshot.runways);
   const inGame = status === 'RUNNING' || status === 'PAUSED';
 
   return (
@@ -36,7 +29,14 @@ export function ScorePanel() {
         <Stat label="Active" value={String(active)} />
         <Stat label="Completed" value={String(completed)} />
         <Stat label="Diverted" value={String(diversions)} tone={diversions > 0 ? 'warn' : undefined} />
-        <Stat label="RWY 09/27" value={runway.length > 0 ? runway.join(', ') : 'Clear'} tone={runway.length > 0 ? 'warn' : 'ok'} />
+        {runways.map((r) => (
+          <Stat
+            key={r.designator}
+            label={`RWY ${r.designator} ${r.use === 'ARRIVALS' ? 'ARR' : 'DEP'}`}
+            value={r.occupiedBy.length > 0 ? r.occupiedBy.join(', ') : 'Clear'}
+            tone={r.occupiedBy.length > 0 ? 'warn' : 'ok'}
+          />
+        ))}
       </div>
       <div className="hud-controls">
         <button type="button" className="btn" disabled={!inGame} onClick={() => controller.togglePause()} title="Pause / resume (P)">
@@ -55,14 +55,10 @@ export function ScorePanel() {
             </button>
           ))}
         </div>
-        <div className="segmented" role="group" aria-label="Camera view">
-          {CAMERA_VIEWS.map(({ view, label, title }) => (
-            <button type="button" key={view} className={view === cameraView ? 'active' : ''} title={title} onClick={() => controller.setCameraView(view)}>
-              {label}
-            </button>
-          ))}
-        </div>
-        <button type="button" className="btn" disabled={!inGame} onClick={() => controller.restart()}>
+        <button type="button" className="btn" title="Fit the whole map on screen" onClick={() => controller.setCameraView('airport')}>
+          ⤢ Fit
+        </button>
+        <button type="button" className="btn" disabled={!inGame && status !== 'GAME_OVER'} onClick={() => controller.restart()}>
           ↻ Restart
         </button>
       </div>

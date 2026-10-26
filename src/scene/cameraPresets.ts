@@ -1,14 +1,18 @@
-export type CameraView = 'airport' | 'airspace';
+export type CameraView = 'airport';
 
+/** Sim-coordinate area (x east, y north, meters) a view frames on screen. */
 export interface CameraPreset {
-  position: [number, number, number];
-  target: [number, number, number];
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
 }
 
-/** Camera presets in Three.js coordinates (x east, y up, z south). */
+/** Height of the top-down orthographic camera above the ground (Three.js Y). */
+export const CAMERA_HEIGHT = 6000;
+
+/** Map view for the top-down 2D camera. */
 export const CAMERA_PRESETS: Record<CameraView, CameraPreset> = {
-  /** Runway, taxiways and apron fill the view. */
-  airport: { position: [0, 1500, 2280], target: [0, 0, 300] },
-  /** Whole airspace: holding stack, final approach and the airport. */
-  airspace: { position: [-1600, 6600, 3400], target: [-1600, 0, -1000] },
+  /** One screen for everything: holding stack, final approach, both runways, terminal and climb-out. */
+  airport: { minX: -2450, maxX: 1180, minY: -1880, maxY: 1230 },
 };

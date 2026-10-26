@@ -75,6 +75,14 @@ export class GameController {
     return result;
   }
 
+  /** HOLD or CONTINUE for the selected taxiing aircraft. */
+  toggleHold(): void {
+    const id = this.store.getState().selectedId;
+    const ac = id ? this.sim.getAircraft(id) : undefined;
+    if (!ac || ac.status !== 'TAXIING') return;
+    this.command({ type: ac.taxiHold ? 'CONTINUE' : 'HOLD', aircraftId: ac.id });
+  }
+
   /** Switches to a camera preset; choosing the current one again snaps back to it. */
   setCameraView(view: CameraView): void {
     this.store.setState((s) => ({ cameraView: view, cameraResetToken: s.cameraResetToken + 1 }));

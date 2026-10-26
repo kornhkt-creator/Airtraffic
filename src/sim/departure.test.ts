@@ -40,6 +40,7 @@ describe('Departure lifecycle', () => {
   it('pushes back, taxis, holds, lines up, takes off and scores exactly once', () => {
     const { sim, dep } = departureSim('G4');
     const id = dep.id;
+    const runway = AIRPORT.departureRunway;
     expect(dep.status).toBe('AT_GATE');
     expect(sim.freeGates()).not.toContain('G4');
 
@@ -76,24 +77,24 @@ describe('Departure lifecycle', () => {
     expect(distance(dep.position, sim.routes.node('H1').position)).toBeLessThan(0.5);
     expect(dep.holdingPointId).toBe('H1');
     // The nose (half a fuselage ahead of the reference point) stays behind the hold-short line.
-    expect(dep.position.y + SIM_CONFIG.aircraft.length / 2).toBeLessThan(-AIRPORT.holdShortOffset);
-    expect(sim.snapshot().runwayOccupiedBy).toHaveLength(0);
+    expect(dep.position.x + SIM_CONFIG.aircraft.length / 2).toBeLessThan(runway.start.x - AIRPORT.holdShortOffset);
+    expect(sim.snapshot().runways.every((r) => r.occupiedBy.length === 0)).toBe(true);
 
     // Line up: occupies the runway and ends aligned with it.
     ok(sim, { type: 'LINE_UP', aircraftId: id });
     expect(dep.status).toBe('LINE_UP');
     expect(dep.onRunway).toBe(true);
     runUntil(sim, () => dep.nav.path === null, 300, track);
-    expect(Math.abs(angleDiff(dep.heading, AIRPORT.runway.heading))).toBeLessThan(1e-3);
-    expect(Math.abs(dep.position.y)).toBeLessThan(0.5);
+    expect(Math.abs(angleDiff(dep.heading, runway.heading))).toBeLessThan(1e-3);
+    expect(Math.abs(dep.position.x - runway.start.x)).toBeLessThan(0.5);
 
     // Takeoff: accelerates, lifts off, vacates the runway, departs.
     ok(sim, { type: 'TAKEOFF', aircraftId: id });
     runUntil(sim, () => dep.altitude > 0, 120, track);
-    expect(dep.speed).toBeGreaterThanOrEqual(75);
-    expect(dep.position.x).toBeLessThan(AIRPORT.runway.end.x);
+    expect(dep.speed).toBeGreaterThanOrEqual(SIM_CONFIG.departure.rotationSpeed);
+    expect(dep.position.y).toBeLessThan(runway.end.y);
     runUntil(sim, () => !dep.onRunway, 120, track);
-    expect(dep.position.x).toBeGreaterThan(AIRPORT.runway.end.x);
+    expect(dep.position.y).toBeGreaterThan(runway.end.y);
     expect(dep.altitude).toBeGreaterThan(30);
     runUntil(sim, () => dep.status === 'DEPARTED', 300, track);
 
@@ -174,13 +175,13 @@ describe('Departure command validation', () => {
     if (!other) throw new Error('spawn failed');
     other.status = 'TAXIING';
     other.gateId = null;
-    other.position = { ...sim.routes.node('P1').position, x: sim.routes.node('P1').position.x + 30 };
+    other.position = { ...sim.routes.node('CO230').position, y: sim.routes.node('CO230').position.y + 30 };
     const r = sim.issueCommand({ type: 'PUSHBACK', aircraftId: dep.id });
     expect(r.ok).toBe(false);
     expect(r.message).toContain('not clear');
   });
 
-  it('keeps the runway exclusive between arrivals and departures', () => {
+  it('runs arrivals and departures on separate runways, each exclusive', () => {
     const { sim, dep } = departureSim();
     ok(sim, { type: 'PUSHBACK', aircraftId: dep.id });
     runUntil(sim, () => dep.nav.path === null);
@@ -189,28 +190,30 @@ describe('Departure command validation', () => {
     // Spawned only now: an arrival kept holding through the whole taxi would divert.
     const arr = spawnArrival(sim);
 
-    // Arrival cleared first: departure may not line up.
+    // A landing on 01L does not block a departure lining up on 01R.
     ok(sim, { type: 'LAND', aircraftId: arr.id });
-    const lineUp = sim.issueCommand({ type: 'LINE_UP', aircraftId: dep.id });
-    expect(lineUp.ok).toBe(false);
-    expect(lineUp.message).toContain(arr.callsign);
-
-    // Once the arrival has vacated, the departure can go — and blocks a new landing clearance.
-    runUntil(sim, () => arr.status === 'LANDED' && !arr.onRunway);
     ok(sim, { type: 'LINE_UP', aircraftId: dep.id });
+    const runways = sim.snapshot().runways;
+    expect(runways.find((r) => r.use === 'ARRIVALS')?.occupiedBy).toEqual([arr.callsign]);
+    expect(runways.find((r) => r.use === 'DEPARTURES')?.occupiedBy).toEqual([dep.callsign]);
+
+    // But each runway takes one aircraft at a time.
+    runUntil(sim, () => arr.status === 'LANDED');
     const second = spawnArrival(sim);
+    sim.step();
     const land = sim.issueCommand({ type: 'LAND', aircraftId: second.id });
     expect(land.ok).toBe(false);
-    expect(land.message).toContain(dep.callsign);
+    expect(land.message).toContain(arr.callsign);
+    expect(land.message).toContain('01L');
   });
 
   it('only spawns departures at free gates', () => {
     const { sim } = departureSim('G1');
     expect(sim.spawnDeparture('G1')).toBeNull();
     expect(sim.spawnDeparture('G2')).not.toBeNull();
-    expect(sim.spawnDeparture()).not.toBeNull();
-    expect(sim.spawnDeparture()).not.toBeNull();
+    while (sim.freeGates().length > 0) expect(sim.spawnDeparture()).not.toBeNull();
     expect(sim.spawnDeparture()).toBeNull();
+    expect(sim.aircraft).toHaveLength(AIRPORT.gateIds.length);
     const callsigns = sim.aircraft.map((a) => a.callsign);
     expect(new Set(callsigns).size).toBe(callsigns.length);
   });

@@ -61,12 +61,12 @@ describe('RouteManager', () => {
   const routes = new RouteManager(AIRPORT);
 
   it('finds the shortest taxi route from a runway exit to a gate', () => {
-    expect(routes.findRoute('X2', 'G1')).toEqual(['X2', 'T2', 'TW', 'PW', 'P1', 'G1']);
+    expect(routes.findRoute('X2', 'G1')).toEqual(['X2', 'A2', 'AJ', 'COJ', 'CO230', 'G1']);
   });
 
   it('never routes over the runway', () => {
     for (const gate of AIRPORT.gateIds) {
-      for (const exit of ['X2', 'X3', 'X4']) {
+      for (const exit of ['X1', 'X2', 'X3', 'X4']) {
         const route = routes.findRoute(exit, gate);
         expect(route).not.toBeNull();
         expect(route!.some((id) => id.startsWith('R'))).toBe(false);
@@ -76,7 +76,8 @@ describe('RouteManager', () => {
   });
 
   it('returns null for nodes only reachable through the runway', () => {
-    expect(routes.findRoute('X2', 'R3')).toBeNull();
+    expect(routes.findRoute('X2', 'RA3')).toBeNull();
+    expect(routes.findRoute('X2', 'RB1')).toBeNull();
     expect(routes.findRoute('X2', 'NOPE')).toBeNull();
   });
 });
@@ -162,7 +163,7 @@ describe('Commands', () => {
     sim.issueCommand({ type: 'LAND', aircraftId: ac.id });
     runUntil(sim, () => ac.status === 'LANDED');
     expect(sim.issueCommand({ type: 'TAXI', aircraftId: ac.id, destinationId: 'ZZ' }).ok).toBe(false);
-    expect(sim.issueCommand({ type: 'TAXI', aircraftId: ac.id, destinationId: 'T3' }).ok).toBe(false);
+    expect(sim.issueCommand({ type: 'TAXI', aircraftId: ac.id, destinationId: 'A3' }).ok).toBe(false);
   });
 
   it('rejects TAXI to a gate reserved by another aircraft', () => {
@@ -194,7 +195,7 @@ describe('Arrival lifecycle', () => {
       return ac.status === 'LANDED';
     });
     expect(ac.altitude).toBe(0);
-    expect(Math.abs(ac.position.y)).toBeLessThan(1);
+    expect(Math.abs(ac.position.x - AIRPORT.arrivalRunway.start.x)).toBeLessThan(1);
     expect(ac.onRunway).toBe(true);
 
     runUntil(sim, () => {
@@ -202,7 +203,7 @@ describe('Arrival lifecycle', () => {
       return !ac.onRunway;
     });
     expect(ac.speed).toBe(0);
-    expect(sim.snapshot().runwayOccupiedBy).toHaveLength(0);
+    expect(sim.snapshot().runways.every((r) => r.occupiedBy.length === 0)).toBe(true);
 
     expect(sim.issueCommand({ type: 'TAXI', aircraftId: ac.id, destinationId: 'G1' }).ok).toBe(true);
     expect(ac.status).toBe('TAXIING');
@@ -243,7 +244,7 @@ describe('Arrival lifecycle', () => {
       sim.step();
       sim.issueCommand({ type: 'LAND', aircraftId: ac.id });
       runUntil(sim, () => ac.status === 'LANDED');
-      expect(ac.position.x).toBeCloseTo(AIRPORT.runway.touchdown.x, 0);
+      expect(distance(ac.position, AIRPORT.arrivalRunway.touchdown)).toBeLessThan(1);
       // Altitude before the touchdown tick: the glide path was actually flown (no snap from altitude).
       expect(ac.prev.altitude).toBeLessThan(3);
     }

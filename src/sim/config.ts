@@ -19,35 +19,39 @@ export const SIM_CONFIG = {
     wingspan: 68,
   },
 
+  /**
+   * Airborne geometry is compressed (tight turns, low stack, steep glide path) so the holding
+   * pattern, final approach and departure climb-out all fit on one screen with the airport.
+   */
   air: {
     approachSpeed: 70,
-    touchdownSpeed: 65,
-    /** Turn radius used for airborne paths (≈5.7°/s at approach speed). */
-    turnRadius: 700,
+    touchdownSpeed: 60,
+    /** Turn radius used for airborne paths (≈14°/s at approach speed). */
+    turnRadius: 280,
     /** Lowest holding level; the only one cleared aircraft leave from. */
-    holdingAltitude: 450,
-    /** Holding stack levels (≥ 300 m apart so stacked aircraft stay vertically separated). */
-    holdingLevels: [450, 800, 1150, 1500] as const,
+    holdingAltitude: 250,
+    /** Holding stack levels (≥ 200 m apart so stacked aircraft stay vertically separated). */
+    holdingLevels: [250, 450, 650, 850] as const,
     /** A cleared arrival keeps its stack level until it is this far below the bottom level. */
-    stackClearance: 300,
+    stackClearance: 200,
     /** LAND is accepted only from the bottom level, within this altitude tolerance. */
-    landingAltitudeTolerance: 100,
+    landingAltitudeTolerance: 60,
     /** Seconds in the holding pattern before an arrival diverts. */
     maxHoldingTime: 180,
     /** Warning issued this many seconds before a diversion. */
     divertWarning: 30,
     /** Diverting aircraft fly this far away from the holding fix before leaving the simulation. */
-    divertDistance: 6000,
-    glideSlopeDeg: 5.5,
-    maxVerticalSpeed: 10,
+    divertDistance: 1600,
+    glideSlopeDeg: 8,
+    maxVerticalSpeed: 12,
     accel: 1.5,
     decel: 1.5,
   },
 
   ground: {
-    maxTaxiSpeed: 10,
-    apronSpeed: 7,
-    standSpeed: 3,
+    maxTaxiSpeed: 14,
+    apronSpeed: 9,
+    standSpeed: 4,
     runwayMaxSpeed: 80,
     /** Lateral acceleration limit used to derive safe turn speeds. */
     lateralAccel: 1.0,
@@ -55,30 +59,33 @@ export const SIM_CONFIG = {
     filletRadius: 40,
     accel: 1.0,
     taxiDecel: 1.5,
-    rolloutDecel: 3,
+    rolloutDecel: 4.5,
     /** Extra distance kept when choosing a runway exit after touchdown. */
     exitMargin: 50,
     /** Speed kept at the runway exit when a taxi route is already assigned. */
     exitHandoffSpeed: 5,
     stopDecel: 3,
-    pushbackSpeed: 2,
+    pushbackSpeed: 3,
     pushbackAccel: 0.5,
     /** Distance pushed back along the apron lane after leaving the stand. */
     pushbackLength: 70,
-    /** Other ground traffic closer than this to the pushback area blocks PUSHBACK. */
-    pushbackClearance: 70,
+    /**
+     * Other ground traffic closer than this to the stand's apron node blocks PUSHBACK: it covers the
+     * swept area (stand, lane and the 70 m push) plus room for taxiing traffic to stop.
+     */
+    pushbackClearance: 150,
     /** Line-up point distance past the runway entry node. */
     lineUpDistance: 70,
   },
 
   departure: {
-    takeoffAccel: 2.5,
-    rotationSpeed: 75,
-    climbSpeed: 85,
+    takeoffAccel: 3.5,
+    rotationSpeed: 70,
+    climbSpeed: 80,
     climbRate: 8,
-    climbAltitude: 900,
+    climbAltitude: 600,
     /** Straight-out distance past the runway end at which the flight is handed off (DEPARTED). */
-    handoffDistance: 7000,
+    handoffDistance: 550,
   },
 
   traffic: {
@@ -91,13 +98,29 @@ export const SIM_CONFIG = {
     /** When a spawn is blocked (caps, no gate, no level), try again after this many seconds. */
     retryDelay: 5,
     /** Arrivals appear this far from the holding fix, within the bearing range (math degrees). */
-    spawnDistance: 5500,
-    spawnBearingDeg: [100, 220],
+    spawnDistance: 1000,
+    spawnBearingDeg: [130, 230],
     /** Seconds a parked arrival spends at the gate before it becomes a departure. */
     turnaroundTime: 60,
     /** Scheduled departures never take the last free gate(s), so arrivals can still park. */
     keepFreeGates: 1,
     difficultyLevels: 5,
+  },
+
+  /** Collision and separation rules (simplified game rules, see safety/CollisionSystem.ts). */
+  safety: {
+    /** Aircraft closer than this vertically can collide; footprints are compared in 2D. */
+    verticalClearance: 20,
+    /** Footprints closer than this (edge to edge) raise a conflict warning. */
+    conflictBuffer: 15,
+    /** Ground follow logic: a taxiing aircraft looks this far ahead along its heading... */
+    followLookahead: 220,
+    /** ...within this lateral half-width... */
+    followCorridor: 50,
+    /** ...and stops this far (center to center) behind ground traffic it finds there. */
+    followGap: 115,
+    /** Taxiing aircraft closing head-on within this distance trigger a warning. */
+    headOnLookahead: 450,
   },
 
   scoring: {

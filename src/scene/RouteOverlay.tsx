@@ -25,7 +25,7 @@ export function SelectedRoute() {
   return <Line points={points} color="#22d3ee" lineWidth={3} dashed dashSize={18} gapSize={10} />;
 }
 
-/** Always-visible guidance: the holding pattern and the final approach path to runway 09. */
+/** Always-visible guidance: the holding pattern and the final approach path to the arrival runway. */
 export function ApproachGuides() {
   const controller = useGame();
   const holding = useMemo(
@@ -37,18 +37,20 @@ export function ApproachGuides() {
   );
   const final = useMemo(() => {
     const { faf } = AIRPORT.approach;
-    const td = AIRPORT.runway.touchdown;
-    const total = td.x - faf.x;
+    const td = AIRPORT.arrivalRunway.touchdown;
+    const total = Math.hypot(td.x - faf.x, td.y - faf.y);
     const pts: [number, number, number][] = [];
     for (let k = 0; k <= 20; k++) {
-      const x = faf.x + (total * k) / 20;
-      pts.push([x, glideAltitude(td.x - x) + 0.5, 0]);
+      const t = k / 20;
+      const x = faf.x + (td.x - faf.x) * t;
+      const y = faf.y + (td.y - faf.y) * t;
+      pts.push([x, glideAltitude(total * (1 - t)) + 0.5, -y]);
     }
     return pts;
   }, []);
   return (
     <group>
-      <Line points={holding} color="#ffffff" lineWidth={1.5} transparent opacity={0.45} dashed dashSize={60} gapSize={40} />
+      <Line points={holding} color="#ffffff" lineWidth={1.5} transparent opacity={0.45} dashed dashSize={40} gapSize={28} />
       <Line points={final} color="#fde68a" lineWidth={1.5} transparent opacity={0.55} dashed dashSize={60} gapSize={40} />
     </group>
   );

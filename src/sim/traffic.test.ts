@@ -133,19 +133,30 @@ describe('Difficulty ramp', () => {
   });
 });
 
-/** Minimal controller that issues the next sensible command to every aircraft once per second. */
+/** Some aircraft is moving on the ground (taxiing, being pushed back, or rolling out). */
+const groundBusy = (sim: Simulation): boolean =>
+  sim.aircraft.some((o) => (o.status === 'TAXIING' && !o.taxiHold) || (o.status === 'PUSHBACK' && o.nav.path !== null) || (o.status === 'LANDED' && o.onRunway));
+
+/**
+ * Minimal careful controller, once per second: issues the next sensible command to every aircraft,
+ * but starts a ground movement only while nothing else moves on the ground (no head-on conflicts).
+ */
 function autopilot(sim: Simulation): void {
   for (const a of [...sim.aircraft]) {
+    if ((a.status === 'LANDED' || a.status === 'AT_GATE') && groundBusy(sim)) continue;
     const tries: Command[] = [];
     if (a.status === 'APPROACH') tries.push({ type: 'LAND', aircraftId: a.id });
     if (a.status === 'LANDED' && !a.destinationId) for (const g of sim.freeGates()) tries.push({ type: 'TAXI', aircraftId: a.id, destinationId: g });
     if (a.status === 'AT_GATE' && a.flightType === 'DEPARTURE') tries.push({ type: 'PUSHBACK', aircraftId: a.id });
-    if (a.status === 'PUSHBACK' && !a.destinationId) tries.push({ type: 'TAXI', aircraftId: a.id, destinationId: 'H1' });
+    if (a.status === 'PUSHBACK' && !a.destinationId) for (const hp of ['H1', 'H2']) tries.push({ type: 'TAXI', aircraftId: a.id, destinationId: hp });
     if (a.status === 'HOLDING') tries.push({ type: 'LINE_UP', aircraftId: a.id });
     if (a.status === 'LINE_UP') tries.push({ type: 'TAKEOFF', aircraftId: a.id });
     for (const cmd of tries) if (sim.issueCommand(cmd).ok) break;
   }
 }
+
+/** Stack levels are this far apart; airborne traffic closer than this vertically is a violation. */
+const MIN_VERTICAL_SEPARATION = HOLDING_LEVELS[1]! - HOLDING_LEVELS[0]! - 10;
 
 describe('Long traffic run', () => {
   const run = (seed: number, withAutopilot: boolean) => {
@@ -163,7 +174,7 @@ describe('Long traffic run', () => {
         for (let j = i + 1; j < airborne.length; j++) {
           const a = airborne[i]!;
           const b = airborne[j]!;
-          if (distance(a.position, b.position) < 1500 && Math.abs(a.altitude - b.altitude) < 290) violations++;
+          if (distance(a.position, b.position) < 1500 && Math.abs(a.altitude - b.altitude) < MIN_VERTICAL_SEPARATION) violations++;
         }
       }
       const levels = sim.aircraft.map((a) => a.holdingLevel).filter((l) => l !== null);
@@ -175,15 +186,17 @@ describe('Long traffic run', () => {
 
   it('keeps stacked and departing traffic separated while the controller works', () => {
     const { sim, violations, maxLevelsShared, flights } = run(99, true);
+    expect(sim.crash).toBeNull();
     expect(maxLevelsShared).toBe(0);
     expect(violations).toBe(0);
-    expect(flights).toBeGreaterThanOrEqual(15);
-    expect(sim.scoring.completedFlights).toBeGreaterThanOrEqual(8);
+    expect(flights).toBeGreaterThanOrEqual(12);
+    expect(sim.scoring.completedFlights).toBeGreaterThanOrEqual(6);
     expect(sim.snapshot().difficultyLevel).toBe(5);
   });
 
   it('diverts unattended arrivals and penalizes each exactly once', () => {
     const { sim, violations, maxLevelsShared } = run(7, false);
+    expect(sim.crash).toBeNull();
     expect(maxLevelsShared).toBe(0);
     expect(violations).toBe(0);
     expect(sim.scoring.diversions).toBeGreaterThan(5);

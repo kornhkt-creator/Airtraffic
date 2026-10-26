@@ -7,7 +7,7 @@ import { ScorePanel } from './ui/ScorePanel';
 import { AircraftPanel } from './ui/AircraftPanel';
 import { CommandPanel } from './ui/CommandPanel';
 import { AlertPanel } from './ui/AlertPanel';
-import { PauseBanner, StartScreen } from './ui/Overlays';
+import { GameOverScreen, PauseBanner, StartScreen } from './ui/Overlays';
 
 export function App() {
   const [controller] = useState(() => new GameController());
@@ -22,6 +22,7 @@ export function App() {
       if (e.target instanceof HTMLInputElement) return;
       if (e.key === 'p' || e.key === 'P') controller.togglePause();
       if (e.key === 'Escape') controller.select(null);
+      if (e.key === 'h' || e.key === 'H') controller.toggleHold();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -38,6 +39,7 @@ export function App() {
             <PauseBanner />
             <AlertPanel />
             <StartScreen />
+            <GameOverScreen />
           </section>
           <CommandPanel />
         </main>

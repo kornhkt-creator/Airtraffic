@@ -1,6 +1,7 @@
 import type { GameController } from './GameController';
 import type { Command, CommandResult } from '../sim/types';
 import type { SimSnapshot } from '../sim/snapshot';
+import type { Simulation } from '../sim/Simulation';
 
 /** Development/test-only handle so browser tests can drive the game without clicking WebGL pixels. */
 export interface SimDebugApi {
@@ -11,6 +12,8 @@ export interface SimDebugApi {
   /** Runs n simulation ticks synchronously (fast-forward). */
   stepTicks(n: number): void;
   select(id: string | null): void;
+  /** The live simulation, for staging scenarios (e.g. a collision) by hand. */
+  raw: Simulation;
 }
 
 declare global {
@@ -30,6 +33,7 @@ export function installDebugHook(controller: GameController): () => void {
       controller.publish();
     },
     select: (id) => controller.select(id),
+    raw: controller.sim,
   };
   return () => {
     delete window.__sim;

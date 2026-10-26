@@ -4,7 +4,8 @@ import { AirportScene } from './AirportScene';
 import { AircraftLayer } from './AircraftLayer';
 import { ApproachGuides, SelectedRoute } from './RouteOverlay';
 import { CameraRig } from './CameraRig';
-import { CAMERA_PRESETS } from './cameraPresets';
+import { CrashEffects } from './Explosion';
+import { CAMERA_HEIGHT } from './cameraPresets';
 
 const SKY = '#a8c8e6';
 
@@ -41,19 +42,20 @@ export function GameCanvas() {
   return (
     <Canvas
       shadows
+      orthographic
       dpr={[1, 2]}
-      gl={{ antialias: true, logarithmicDepthBuffer: true }}
-      camera={{ position: CAMERA_PRESETS.airport.position, fov: 45, near: 1, far: 80000 }}
+      gl={{ antialias: true }}
+      camera={{ position: [0, CAMERA_HEIGHT, 1], zoom: 0.5, near: 10, far: CAMERA_HEIGHT * 3 }}
       onPointerMissed={() => controller.select(null)}
     >
       <GameLoop />
       <color attach="background" args={[SKY]} />
-      <fog attach="fog" args={[SKY, 9000, 32000]} />
       <Lighting />
       <AirportScene />
       <ApproachGuides />
       <AircraftLayer />
       <SelectedRoute />
+      <CrashEffects />
       <CameraRig />
     </Canvas>
   );

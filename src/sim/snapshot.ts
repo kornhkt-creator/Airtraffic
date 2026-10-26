@@ -1,4 +1,4 @@
-import type { AircraftStatus, Alert, FlightType, GameStatus } from './types';
+import type { AircraftStatus, Alert, CrashInfo, FlightType, GameStatus } from './types';
 import type { CommandOption } from './CommandSystem';
 
 /** Plain, serializable view of an aircraft for the UI. */
@@ -18,6 +18,8 @@ export interface AircraftView {
   holdingLevel: number | null;
   /** Seconds until a holding arrival diverts, or null when not holding. */
   divertIn: number | null;
+  /** Another aircraft is dangerously close. */
+  conflict: boolean;
   commands: CommandOption[];
 }
 
@@ -32,5 +34,15 @@ export interface SimSnapshot {
   activeFlights: number;
   aircraft: AircraftView[];
   alerts: Alert[];
-  runwayOccupiedBy: string[];
+  runways: RunwayView[];
+  /** The collision that ended the game, if any. */
+  crash: CrashInfo | null;
+}
+
+export interface RunwayView {
+  /** Designator in use, e.g. "01L". */
+  designator: string;
+  use: 'ARRIVALS' | 'DEPARTURES';
+  /** Callsigns of the aircraft occupying the runway. */
+  occupiedBy: string[];
 }

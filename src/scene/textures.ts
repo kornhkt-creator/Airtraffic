@@ -1,4 +1,5 @@
-import { CanvasTexture, SRGBColorSpace } from 'three';
+import { useEffect, useMemo } from 'react';
+import { CanvasTexture, SRGBColorSpace, type Texture } from 'three';
 
 export interface TextTextureOptions {
   width?: number;
@@ -36,5 +37,26 @@ export function makeTextTexture(text: string, opts: TextTextureOptions = {}): Ca
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
   texture.anisotropy = 8;
+  return texture;
+}
+
+/** Paints a procedural canvas texture with `draw`. */
+export function makeCanvasTexture(width: number, height: number, draw: (ctx: CanvasRenderingContext2D) => void): CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (ctx) draw(ctx);
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.anisotropy = 8;
+  return texture;
+}
+
+/** Creates a texture once per `deps` and disposes it when replaced or unmounted. */
+export function useDisposableTexture<T extends Texture>(factory: () => T, deps: unknown[]): T {
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const texture = useMemo(factory, deps);
+  useEffect(() => () => texture.dispose(), [texture]);
   return texture;
 }

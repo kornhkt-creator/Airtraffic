@@ -3,6 +3,7 @@ import type { SimWorld } from '../world';
 import { SIM_CONFIG } from '../config';
 import { transition } from './AircraftStateMachine';
 import { advanceAlongPath, assignPath, remainingDistance, updateAltitude } from './MovementSystem';
+import { followSpeedCap } from '../safety/CollisionSystem';
 import { distancePastRunwayEnd, glideAltitude, planDivert, planRollout, planTaxi } from './navigation';
 import { levelAltitude } from './holdingStack';
 
@@ -17,6 +18,7 @@ export function beginTaxi(world: SimWorld, ac: Aircraft, route: string[]): void 
   ac.pendingRoute = null;
   ac.pushback = null;
   ac.holdingPointId = null;
+  ac.taxiHold = false;
   assignPath(ac, planTaxi(route, world.routes, startPoint), 'taxi', 0);
 }
 
@@ -24,7 +26,7 @@ function touchdown(world: SimWorld, ac: Aircraft): void {
   ac.altitude = 0;
   transition(ac, 'LANDED', (e) => world.emit(e));
   ac.onRunway = true;
-  const { path, exitNodeId } = planRollout(ac, world.routes);
+  const { path, exitNodeId } = planRollout(ac, world.routes, world.aircraft);
   ac.exitNodeId = exitNodeId;
   assignPath(ac, path, 'rollout', 0);
 }
@@ -120,7 +122,8 @@ export function updateAircraft(world: SimWorld, ac: Aircraft, dt: number): void 
       break;
     }
     case 'TAXIING': {
-      if (advanceAlongPath(ac, dt)) finishTaxi(world, ac);
+      const cap = ac.taxiHold ? 0 : followSpeedCap(ac, world.aircraft);
+      if (advanceAlongPath(ac, dt, cap)) finishTaxi(world, ac);
       break;
     }
     case 'AT_GATE':
@@ -148,7 +151,7 @@ export function updateAircraft(world: SimWorld, ac: Aircraft, dt: number): void 
       updateTakeoff(world, ac, dt);
       break;
     default:
-      // GO_AROUND and CRASHED behavior arrives with later milestones.
+      // Crashed aircraft stay where they are; GO_AROUND behavior arrives with a later milestone.
       break;
   }
 }

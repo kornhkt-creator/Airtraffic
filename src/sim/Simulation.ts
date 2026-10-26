@@ -1,6 +1,6 @@
-import type { Aircraft, Alert, AlertSeverity, Command, CommandResult, GameStatus, SimEvent, Vec2, Vec3 } from './types';
+import type { Aircraft, Alert, AlertSeverity, Command, CommandResult, CrashInfo, GameStatus, SimEvent, Vec2, Vec3 } from './types';
 import type { SimWorld } from './world';
-import type { AircraftView, SimSnapshot } from './snapshot';
+import type { AircraftView, RunwayView, SimSnapshot } from './snapshot';
 import { SIM_CONFIG } from './config';
 import { AIRPORT } from './airport/layout';
 import { RouteManager } from './airport/RouteManager';
@@ -8,7 +8,9 @@ import { SimulationClock } from './SimulationClock';
 import { Rng } from './rng';
 import { ScoringSystem } from './ScoringSystem';
 import { executeCommand, getCommandOptions, validateCommand, type CommandOption } from './CommandSystem';
-import { getRunwayOccupants } from './safety/SafetySystem';
+import { getRunwayOccupants, runwayOf } from './safety/SafetySystem';
+import { findCollisions, findHeadOn, findProximities } from './safety/CollisionSystem';
+import { transition } from './aircraft/AircraftStateMachine';
 import { updateAircraft } from './aircraft/AircraftAI';
 import { assignPath } from './aircraft/MovementSystem';
 import { apronNodeOf, createHoldingLoop, glideAltitude, planInbound } from './aircraft/navigation';
@@ -40,12 +42,16 @@ export class Simulation implements SimWorld {
   tick = 0;
   aircraft: Aircraft[] = [];
   alerts: Alert[] = [];
+  /** The collision that ended the game (set exactly once per game). */
+  crash: CrashInfo | null = null;
 
   private seed: number;
   private rng: Rng;
   private events: SimEvent[] = [];
   private nextAircraftNumber = 1;
   private nextAlertId = 1;
+  /** Pairs currently in conflict, so each new conflict is announced once. */
+  private conflictPairs = new Set<string>();
 
   constructor(options: SimulationOptions = {}) {
     this.seed = options.seed ?? 1;
@@ -65,6 +71,8 @@ export class Simulation implements SimWorld {
     this.tick = 0;
     this.aircraft = [];
     this.alerts = [];
+    this.crash = null;
+    this.conflictPairs.clear();
     this.events = [];
     this.nextAircraftNumber = 1;
     this.nextAlertId = 1;
@@ -123,8 +131,60 @@ export class Simulation implements SimWorld {
       updateAircraft(this, ac, dt);
     }
     this.processEvents();
+    if (this.checkCollisions()) return;
+    this.updateConflicts();
     this.spawner.update(this, this.rng, this.autoSpawn);
     this.alerts = this.alerts.filter((a) => a.expiresAt === null || a.expiresAt > this.time);
+  }
+
+  // ---- Safety ----------------------------------------------------------------------------
+
+  /** A confirmed collision crashes both aircraft and ends the game, exactly once. */
+  private checkCollisions(): boolean {
+    if (this.crash) return true;
+    const hit = findCollisions(this.aircraft)[0];
+    if (!hit) return false;
+    const { a, b } = hit;
+    for (const ac of [a, b]) {
+      transition(ac, 'CRASHED', (e) => this.emit(e));
+      ac.speed = 0;
+      ac.conflict = true;
+      assignPath(ac, null, 'none', 0);
+    }
+    this.crash = {
+      aircraftIds: [a.id, b.id],
+      callsigns: [a.callsign, b.callsign],
+      position: { x: (a.position.x + b.position.x) / 2, y: (a.position.y + b.position.y) / 2 },
+      altitude: (a.altitude + b.altitude) / 2,
+      time: this.time,
+    };
+    this.status = 'GAME_OVER';
+    this.events = [];
+    this.pushAlert('critical', `COLLISION — ${a.callsign} and ${b.callsign} collided. Game over.`, a.id);
+    return true;
+  }
+
+  /** Flags aircraft that are dangerously close and announces each new conflict once. */
+  private updateConflicts(): void {
+    for (const ac of this.aircraft) ac.conflict = false;
+    const active = new Set<string>();
+    for (const { a, b } of findProximities(this.aircraft, SIM_CONFIG.safety.conflictBuffer)) {
+      // Two stationary aircraft cannot close in on each other.
+      if (a.speed < 0.1 && b.speed < 0.1) continue;
+      a.conflict = true;
+      b.conflict = true;
+      const key = [a.id, b.id].sort().join('|');
+      active.add(key);
+      if (!this.conflictPairs.has(key)) this.pushAlert('warning', `Traffic conflict — ${a.callsign} and ${b.callsign} are dangerously close!`, a.id);
+    }
+    for (const { a, b } of findHeadOn(this.aircraft)) {
+      a.conflict = true;
+      b.conflict = true;
+      const key = `head-on|${[a.id, b.id].sort().join('|')}`;
+      active.add(key);
+      if (!this.conflictPairs.has(key)) this.pushAlert('warning', `Head-on traffic — ${a.callsign} and ${b.callsign} are taxiing toward each other. Hold one of them!`, a.id);
+    }
+    this.conflictPairs = active;
   }
 
   // ---- World access ----------------------------------------------------------------------
@@ -194,6 +254,8 @@ export class Simulation implements SimWorld {
       holdingLevel: null,
       divertWarned: false,
       gateTime: 0,
+      conflict: false,
+      taxiHold: false,
     };
   }
 
@@ -261,7 +323,7 @@ export class Simulation implements SimWorld {
       if (e.type === 'STATUS_CHANGED' && e.to === 'LANDED') {
         this.pushAlert('info', `${ac.callsign} touched down.`, ac.id);
       } else if (e.type === 'STATUS_CHANGED' && e.to === 'HOLDING') {
-        this.pushAlert('info', `${ac.callsign} holding short runway ${this.routes.layout.runway.designators[0]}, ready for departure.`, ac.id);
+        this.pushAlert('info', `${ac.callsign} holding short runway ${this.routes.layout.departureRunway.designators[0]}, ready for departure.`, ac.id);
       } else if (e.type === 'RUNWAY_VACATED' && !ac.pendingRoute && ac.status === 'LANDED') {
         this.pushAlert('info', `${ac.callsign} vacated the runway and is waiting for taxi clearance.`, ac.id);
       } else if (e.type === 'PUSHBACK_COMPLETED' && !ac.pendingRoute) {
@@ -325,7 +387,7 @@ export class Simulation implements SimWorld {
   }
 
   private describeTarget(ac: Aircraft): string {
-    const rwy = this.routes.layout.runway.designators[0];
+    const rwy = runwayOf(ac, this.routes.layout).designators[0];
     switch (ac.status) {
       case 'APPROACH': {
         const level = ac.holdingLevel ?? 0;
@@ -336,13 +398,14 @@ export class Simulation implements SimWorld {
       case 'DIVERTED':
         return 'Diverting to alternate airport';
       case 'LANDING':
-        return `Cleared to land RWY ${this.routes.layout.runway.designators[0]}`;
+        return `Cleared to land RWY ${rwy}`;
       case 'LANDED': {
         const exit = ac.exitNodeId ? this.routes.label(ac.exitNodeId) : 'runway exit';
         if (ac.pendingRoute && ac.destinationId) return `Vacating via ${exit}, then ${this.routes.label(ac.destinationId)}`;
         return ac.onRunway ? `Rolling out — vacating via ${exit}` : `Clear of runway at ${exit} — awaiting taxi`;
       }
       case 'TAXIING':
+        if (ac.taxiHold) return `Holding position${ac.destinationId ? ` — cleared to ${this.routes.label(ac.destinationId)} when released` : ''}`;
         return ac.destinationId ? `Taxiing to ${this.routes.label(ac.destinationId)} via ${this.routes.describeRoute(ac.routeNodeIds)}` : 'Taxiing';
       case 'AT_GATE': {
         const gate = ac.gateId ? this.routes.label(ac.gateId) : 'gate';
@@ -364,6 +427,18 @@ export class Simulation implements SimWorld {
     }
   }
 
+  private runwayViews(): RunwayView[] {
+    const { layout } = this.routes;
+    return [
+      { runway: layout.arrivalRunway, use: 'ARRIVALS' as const },
+      { runway: layout.departureRunway, use: 'DEPARTURES' as const },
+    ].map(({ runway, use }) => ({
+      designator: runway.designators[0],
+      use,
+      occupiedBy: getRunwayOccupants(this.aircraft, runway, layout).map((a) => a.callsign),
+    }));
+  }
+
   snapshot(): SimSnapshot {
     const views: AircraftView[] = this.aircraft.map((ac) => ({
       id: ac.id,
@@ -379,6 +454,7 @@ export class Simulation implements SimWorld {
       onRunway: ac.onRunway,
       holdingLevel: ac.holdingLevel,
       divertIn: ac.status === 'APPROACH' && ac.nav.kind === 'holding' ? Math.max(0, SIM_CONFIG.air.maxHoldingTime - ac.waitTime) : null,
+      conflict: ac.conflict,
       commands: getCommandOptions(this, ac),
     }));
     return {
@@ -392,7 +468,8 @@ export class Simulation implements SimWorld {
       activeFlights: this.aircraft.filter(isActiveFlight).length,
       aircraft: views,
       alerts: this.alerts.map((a) => ({ ...a })),
-      runwayOccupiedBy: getRunwayOccupants(this.aircraft).map((a) => a.callsign),
+      runways: this.runwayViews(),
+      crash: this.crash ? { ...this.crash, position: { ...this.crash.position } } : null,
     };
   }
 }

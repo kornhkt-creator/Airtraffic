@@ -27,7 +27,7 @@ export function planInbound(from: { position: Vec2; heading: number }, holdingLo
 /** Path away from the airport (beyond the holding fix) for an arrival that ran out of holding time. */
 export function planDivert(ac: Aircraft, layout: AirportLayout = AIRPORT): Path {
   const center = layout.approach.holdingCenter;
-  const away = normalize(sub(center, layout.runway.touchdown));
+  const away = normalize(sub(center, layout.arrivalRunway.touchdown));
   const exit = { x: center.x + away.x * SIM_CONFIG.air.divertDistance, y: center.y + away.y * SIM_CONFIG.air.divertDistance };
   return new Path(
     dubinsSegments({ position: ac.position, heading: ac.heading }, { position: exit, heading: Math.atan2(away.y, away.x) }, SIM_CONFIG.air.turnRadius, SIM_CONFIG.air.approachSpeed),
@@ -42,7 +42,7 @@ export function glideAltitude(remainingToTouchdown: number): number {
 
 /** Curvature-bounded path from the aircraft's current pose to the FAF, then straight to touchdown. */
 export function planLanding(ac: Aircraft, layout: AirportLayout = AIRPORT): Path {
-  const { runway, approach } = layout;
+  const { arrivalRunway: runway, approach } = layout;
   const speed = SIM_CONFIG.air.approachSpeed;
   const toFaf = dubinsSegments(
     { position: ac.position, heading: ac.heading },
@@ -53,26 +53,34 @@ export function planLanding(ac: Aircraft, layout: AirportLayout = AIRPORT): Path
   return new Path([...toFaf, lineSegment(approach.faf, runway.touchdown, speed)], AIR_MOTION);
 }
 
-/** Picks the first runway exit the aircraft can still slow down for. */
-export function chooseRunwayExit(position: Vec2, speed: number, routes: RouteManager): { runwayNodeId: string; exitNodeId: string } {
-  const { runway } = routes.layout;
+/** Ground traffic this close to an exit node blocks that exit for a landing rollout. */
+const EXIT_BLOCK_RADIUS = 90;
+
+/**
+ * Picks the first runway exit the aircraft can still slow down for, skipping exits where other
+ * traffic is standing (e.g. an earlier arrival still waiting for taxi clearance).
+ */
+export function chooseRunwayExit(position: Vec2, speed: number, routes: RouteManager, traffic: readonly Aircraft[] = []): { runwayNodeId: string; exitNodeId: string } {
+  const runway = routes.layout.arrivalRunway;
   const g = SIM_CONFIG.ground;
   const turnSpeed = Math.sqrt(g.lateralAccel * g.filletRadius);
   const required = Math.max(0, speed * speed - turnSpeed * turnSpeed) / (2 * g.rolloutDecel) + g.filletRadius + g.exitMargin;
   const forward = fromAngle(runway.heading);
   const exits = runway.exits;
+  const blocked = (exitNodeId: string) =>
+    traffic.some((a) => a.altitude < 5 && a.status !== 'DEPARTED' && distance(a.position, routes.node(exitNodeId).position) < EXIT_BLOCK_RADIUS);
   for (const exit of exits) {
     const along = dot(sub(routes.node(exit.runwayNodeId).position, position), forward);
-    if (along >= required) return exit;
+    if (along >= required && !blocked(exit.exitNodeId)) return exit;
   }
   const last = exits[exits.length - 1];
   if (!last) throw new Error('Runway has no exits');
   return last;
 }
 
-export function planRollout(ac: Aircraft, routes: RouteManager): { path: Path; exitNodeId: string } {
+export function planRollout(ac: Aircraft, routes: RouteManager, traffic: readonly Aircraft[] = []): { path: Path; exitNodeId: string } {
   const g = SIM_CONFIG.ground;
-  const exit = chooseRunwayExit(ac.position, ac.speed, routes);
+  const exit = chooseRunwayExit(ac.position, ac.speed, routes, traffic.filter((a) => a !== ac));
   const path = buildFilletedPath([ac.position, routes.node(exit.runwayNodeId).position, routes.node(exit.exitNodeId).position], {
     filletRadius: g.filletRadius,
     edgeSpeeds: [g.runwayMaxSpeed, g.maxTaxiSpeed],
@@ -138,8 +146,8 @@ export function planPushback(gateId: string, routes: RouteManager): { path: Path
   const apronNodeId = apronNodeOf(gateId, routes);
   const apron = routes.node(apronNodeId).position;
   const next = routeToNearestHoldingPoint(apronNodeId, routes)?.[1];
-  // Face the first leg toward the runway; fall back to east if no route exists.
-  const facing = next ? normalize(sub(routes.node(next).position, apron)) : { x: 1, y: 0 };
+  // Face the first leg toward the runway; fall back to south if no route exists.
+  const facing = next ? normalize(sub(routes.node(next).position, apron)) : { x: 0, y: -1 };
   const endPoint = { x: apron.x - facing.x * g.pushbackLength, y: apron.y - facing.y * g.pushbackLength };
   const path = buildFilletedPath([routes.node(gateId).position, apron, endPoint], {
     filletRadius: g.filletRadius,
@@ -161,7 +169,7 @@ export function runwayEntryOf(holdingPointId: string, routes: RouteManager): str
 /** From the holding point onto the runway, ending aligned with the runway heading. */
 export function planLineUp(holdingPointId: string, routes: RouteManager): Path {
   const g = SIM_CONFIG.ground;
-  const { runway } = routes.layout;
+  const runway = routes.layout.departureRunway;
   const entry = routes.node(runwayEntryOf(holdingPointId, routes)).position;
   const dir = fromAngle(runway.heading);
   const lineUpPoint = { x: entry.x + dir.x * g.lineUpDistance, y: entry.y + dir.y * g.lineUpDistance };
@@ -177,12 +185,14 @@ export function planLineUp(holdingPointId: string, routes: RouteManager): Path {
 /** Straight takeoff roll and climb-out along the runway heading to the handoff point. */
 export function planTakeoff(ac: Aircraft, layout: AirportLayout = AIRPORT): Path {
   const d = SIM_CONFIG.departure;
-  const dir = fromAngle(layout.runway.heading);
-  const handoff = { x: layout.runway.end.x + dir.x * d.handoffDistance, y: layout.runway.end.y + dir.y * d.handoffDistance };
+  const runway = layout.departureRunway;
+  const dir = fromAngle(runway.heading);
+  const handoff = { x: runway.end.x + dir.x * d.handoffDistance, y: runway.end.y + dir.y * d.handoffDistance };
   return new Path([lineSegment(ac.position, handoff, d.climbSpeed)], { accel: d.takeoffAccel, decel: SIM_CONFIG.air.decel });
 }
 
-/** Distance travelled past the far end of the runway (negative while still over the runway). */
+/** Distance travelled past the far end of the departure runway (negative while still over it). */
 export function distancePastRunwayEnd(position: Vec2, layout: AirportLayout = AIRPORT): number {
-  return dot(sub(position, layout.runway.end), fromAngle(layout.runway.heading));
+  const runway = layout.departureRunway;
+  return dot(sub(position, runway.end), fromAngle(runway.heading));
 }

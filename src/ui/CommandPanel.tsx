@@ -11,7 +11,7 @@ export function CommandPanel() {
   return (
     <aside className="panel right-panel">
       <h2 className="panel-title">Aircraft</h2>
-      {selected ? <Details aircraft={selected} /> : <p className="muted">Select an aircraft in the list or click it in the 3D view.</p>}
+      {selected ? <Details aircraft={selected} /> : <p className="muted">Select an aircraft in the list or click it on the map.</p>}
     </aside>
   );
 }

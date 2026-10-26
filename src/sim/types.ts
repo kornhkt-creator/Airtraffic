@@ -101,10 +101,24 @@ export interface Aircraft {
   divertWarned: boolean;
   /** Seconds parked at the gate (drives the arrival → departure turnaround). */
   gateTime: number;
+  /** True while another aircraft's footprint is dangerously close (conflict warning). */
+  conflict: boolean;
+  /** Controller told this taxiing aircraft to hold position. */
+  taxiHold: boolean;
+}
+
+/** The collision that ended the game. */
+export interface CrashInfo {
+  aircraftIds: [string, string];
+  callsigns: [string, string];
+  /** Midpoint between the two aircraft. */
+  position: Vec2;
+  altitude: number;
+  time: number;
 }
 
 /** Commands that need no parameter besides the aircraft. */
-export type SimpleCommandType = 'LAND' | 'PUSHBACK' | 'LINE_UP' | 'TAKEOFF';
+export type SimpleCommandType = 'LAND' | 'PUSHBACK' | 'LINE_UP' | 'TAKEOFF' | 'HOLD' | 'CONTINUE';
 
 export type Command =
   | { type: SimpleCommandType; aircraftId: string }
