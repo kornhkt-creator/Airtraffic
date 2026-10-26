@@ -4,12 +4,13 @@ import { SIM_CONFIG } from '../config';
 import { cross, dot, fromAngle, sub } from '../math';
 
 /**
- * Segregated runway operations (simplified game rule, not real ATC procedure): arrivals use only
- * the arrival runway and departures only the departure runway. A runway is occupied by any of its
- * aircraft cleared to land, or any of its aircraft physically on it.
+ * Runway use (simplified game rule, not real ATC procedure): an aircraft uses the runway it was
+ * cleared for — departures always 01R, arrivals 01L unless cleared to land on 01R. A runway is
+ * occupied by any of its aircraft cleared to land, or any of its aircraft physically on it.
  */
 export function runwayOf(ac: Aircraft, layout: AirportLayout): RunwayDef {
-  return ac.flightType === 'ARRIVAL' ? layout.arrivalRunway : layout.departureRunway;
+  const assigned = ac.runwayId === null ? undefined : layout.runways.find((r) => r.id === ac.runwayId);
+  return assigned ?? (ac.flightType === 'ARRIVAL' ? layout.arrivalRunway : layout.departureRunway);
 }
 
 export function getRunwayOccupants(aircraft: readonly Aircraft[], runway: RunwayDef, layout: AirportLayout): Aircraft[] {
@@ -29,7 +30,7 @@ function clearedFor(ac: Aircraft, runway: RunwayDef, layout: AirportLayout): boo
  */
 export function findRunwayIncursions(aircraft: readonly Aircraft[], layout: AirportLayout): { ac: Aircraft; runway: RunwayDef }[] {
   const out: { ac: Aircraft; runway: RunwayDef }[] = [];
-  for (const runway of [layout.arrivalRunway, layout.departureRunway]) {
+  for (const runway of layout.runways) {
     const dir = fromAngle(runway.heading);
     for (const ac of aircraft) {
       if (ac.altitude > 5 || ac.status === 'CRASHED' || ac.status === 'DEPARTED' || clearedFor(ac, runway, layout)) continue;

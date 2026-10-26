@@ -107,6 +107,8 @@ export interface Aircraft {
   taxiHold: boolean;
   /** Delay penalties already charged for the current wait (resets when the wait does). */
   delayPenalties: number;
+  /** Runway this aircraft was cleared for (null = its flight type's default runway). */
+  runwayId: string | null;
 }
 
 /** Why a game ended. */
@@ -126,7 +128,9 @@ export interface CrashInfo {
 export type SimpleCommandType = 'LAND' | 'GO_AROUND' | 'PUSHBACK' | 'LINE_UP' | 'TAKEOFF' | 'HOLD' | 'CONTINUE';
 
 export type Command =
-  | { type: SimpleCommandType; aircraftId: string }
+  | { type: Exclude<SimpleCommandType, 'LAND'>; aircraftId: string }
+  /** Landing clearance; `runwayId` picks the runway (default: the arrival runway). */
+  | { type: 'LAND'; aircraftId: string; runwayId?: string }
   | { type: 'TAXI'; aircraftId: string; destinationId: string };
 
 export type CommandType = Command['type'];

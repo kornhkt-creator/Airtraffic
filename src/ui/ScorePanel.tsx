@@ -32,7 +32,7 @@ export function ScorePanel() {
         {runways.map((r) => (
           <Stat
             key={r.designator}
-            label={`RWY ${r.designator} ${r.use === 'ARRIVALS' ? 'ARR' : 'DEP'}`}
+            label={`RWY ${r.designator} ${r.use === 'ARRIVALS' ? 'ARR' : r.use === 'MIXED' ? 'DEP/ARR' : 'DEP'}`}
             value={r.occupiedBy.length > 0 ? r.occupiedBy.join(', ') : 'Clear'}
             tone={r.occupiedBy.length > 0 ? 'warn' : 'ok'}
           />

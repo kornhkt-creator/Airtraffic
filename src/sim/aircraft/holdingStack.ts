@@ -24,10 +24,18 @@ export function stackAltitude(ac: Aircraft): number {
 /** Aircraft that may move into a free stack level (holding, inbound or going around). */
 const canDescendInStack = (a: Aircraft): boolean => a.status === 'APPROACH' || a.status === 'GO_AROUND';
 
-/** Lowest level not owned by any aircraft, or null when the stack is full. */
+/**
+ * Lowest level not owned by any aircraft, or null when the stack is full. A level that was just
+ * given up is not free yet while an aircraft is still descending through it: handing it to a new
+ * arrival at that moment would put the two within the airborne separation limit.
+ */
 export function freeHoldingLevel(aircraft: readonly Aircraft[]): number | null {
+  const airborneStack = aircraft.filter((a) => (a.status === 'APPROACH' || a.status === 'GO_AROUND' || a.status === 'DIVERTED') && a.altitude > 0);
   for (let level = 0; level < HOLDING_LEVELS.length; level++) {
-    if (!aircraft.some((a) => a.holdingLevel === level)) return level;
+    if (aircraft.some((a) => a.holdingLevel === level)) continue;
+    const altitude = levelAltitude(level);
+    if (airborneStack.some((a) => Math.abs(a.altitude - altitude) < SIM_CONFIG.safety.airVertical)) continue;
+    return level;
   }
   return null;
 }

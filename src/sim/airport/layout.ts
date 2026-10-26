@@ -8,8 +8,9 @@ import type { Vec2 } from '../types';
  * - The renderer maps sim (x, y, alt) to Three.js (x, alt, -y).
  *
  * The layout is modelled on Suvarnabhumi (BKK): two parallel north-south runways with the terminal
- * between them. Operations are segregated (simplified game rule): arrivals land northbound on the
- * west runway 01L, departures take off northbound from the east runway 01R. The concourse spine and
+ * between them. Both runways are used northbound (simplified game rule): departures take off from
+ * the east runway 01R; arrivals land on 01L (west) by default or on 01R when the controller picks it,
+ * so 01R is shared by landings and takeoffs, one aircraft at a time. The concourse spine and
  * main terminal sit at the north end of the complex, two long piers (C and F) reach south from it,
  * and a satellite concourse lies further south.
  */
@@ -52,13 +53,20 @@ export interface RunwayDef {
   readonly length: number;
   readonly width: number;
   readonly touchdown: Vec2;
-  /** Exits in landing order (empty for the departure runway). */
+  /** Exits in landing order. */
   readonly exits: readonly RunwayExit[];
 }
 
 export interface ApproachDef {
   /** Final approach fix: aircraft are aligned with the arrival runway from here. */
   readonly faf: Vec2;
+  /**
+   * Arrival route flown after a landing clearance: south along the downwind leg (x = downwindX,
+   * west of the holding pattern), east along the base leg (y = baseY, south of the airport), then a
+   * turn onto final for the chosen runway.
+   */
+  readonly downwindX: number;
+  readonly baseY: number;
   readonly holdingCenter: Vec2;
   readonly holdingStraight: number;
   readonly holdingRadius: number;
@@ -74,8 +82,10 @@ export interface AirportLayout {
   readonly name: string;
   /** Runway used by arrivals (landing). */
   readonly arrivalRunway: RunwayDef;
-  /** Runway used by departures (takeoff). */
+  /** Runway used by departures (takeoff); arrivals may also land on it. */
   readonly departureRunway: RunwayDef;
+  /** Every runway; all of them accept landings. */
+  readonly runways: readonly RunwayDef[];
   readonly approach: ApproachDef;
   readonly nodes: readonly TaxiNode[];
   readonly edges: readonly TaxiEdge[];
@@ -199,11 +209,20 @@ function buildLayout(): AirportLayout {
     node('H1', 'holdingPoint', X.holdB, Y.runwaySouth, 'Holding point B1'),
     node('H2', 'holdingPoint', X.holdB, -500, 'Holding point B2'),
   );
+  // Exits B3-B5 let arrivals that land on 01R vacate onto taxiway B.
+  const exitBYs = [150, 500, Y.runwayNorth];
+  nodes.push(node('RB3', 'runway', X.departureRunway, exitBYs[0]!), node('RB4', 'runway', X.departureRunway, exitBYs[1]!));
+  exitBYs.forEach((y, i) => nodes.push(node(`Y${i + 3}`, 'exit', X.holdB, y, `Exit B${i + 3}`)));
   edges.push(
     edge('RB0', 'RB1', 'runway', 'RWY 01R'),
-    edge('RB1', 'RB2', 'runway', 'RWY 01R'),
+    edge('RB1', 'RB3', 'runway', 'RWY 01R'),
+    edge('RB3', 'RB4', 'runway', 'RWY 01R'),
+    edge('RB4', 'RB2', 'runway', 'RWY 01R'),
     edge('RB0', 'H1', 'runwayConnector', 'B1'),
     edge('RB1', 'H2', 'runwayConnector', 'B2'),
+    edge('RB3', 'Y3', 'runwayConnector', 'B3'),
+    edge('RB4', 'Y4', 'runwayConnector', 'B4'),
+    edge('RB2', 'Y5', 'runwayConnector', 'B5'),
   );
 
   // ---- Taxiway B (east parallel), south to north
@@ -212,11 +231,15 @@ function buildLayout(): AirportLayout {
     ['BL', Y.taxiwayL],
     ['B2', -500],
     ['BK', Y.taxiwayK],
+    ['B3', exitBYs[0]!],
     ['BJ', Y.taxiwayJ],
+    ['B4', exitBYs[1]!],
+    ['B5', exitBYs[2]!],
   ];
   for (const [id, y] of taxiwayB) nodes.push(node(id, 'taxiway', X.taxiwayB, y));
   for (let i = 1; i < taxiwayB.length; i++) edges.push(edge(taxiwayB[i - 1]![0], taxiwayB[i]![0], 'taxiway', 'B'));
   edges.push(edge('H1', 'B1', 'taxiway', 'B1'), edge('H2', 'B2', 'taxiway', 'B2'));
+  exitBYs.forEach((_, i) => edges.push(edge(`Y${i + 3}`, `B${i + 3}`, 'taxiway', `B${i + 3}`)));
 
   // ---- Cross taxiways
   nodes.push(node('LM', 'taxiway', 0, Y.taxiwayL));
@@ -274,7 +297,7 @@ function buildLayout(): AirportLayout {
     length: Y.runwayNorth - Y.runwaySouth,
     width: 60,
     touchdown: { x: X.departureRunway, y: Y.runwaySouth + 120 },
-    exits: [],
+    exits: exitBYs.map((_, i) => ({ runwayNodeId: i === exitBYs.length - 1 ? 'RB2' : `RB${i + 3}`, exitNodeId: `Y${i + 3}`, name: `B${i + 3}` })),
   };
 
   // Scenery: parked aircraft on the center pier, the satellite, the pier north arms and remote stands.
@@ -298,8 +321,11 @@ function buildLayout(): AirportLayout {
     name: 'Suvarnabhumi International',
     arrivalRunway,
     departureRunway,
+    runways: [arrivalRunway, departureRunway],
     approach: {
       faf: { x: X.arrivalRunway, y: Y.runwaySouth - 550 },
+      downwindX: -2600,
+      baseY: Y.runwaySouth - 750,
       holdingCenter: { x: -1800, y: -150 },
       holdingStraight: 700,
       holdingRadius: 280,

@@ -22,12 +22,13 @@ npm run test:e2e   # starts the dev server itself, or reuses one on port 5173
 
 ## How to play
 
-You control a two-runway airport: arrivals land on **01L** (west), departures take off from **01R** (east).
+You control a two-runway airport: departures take off from **01R** (east); arrivals land on **01L** (west) or **01R**, your choice. 01R is shared by landings and takeoffs, one aircraft on the runway at a time.
+After a landing clearance an arrival leaves the hold and flies the arrival route: south along the west side, east below the airport, then north onto final.
 Select an aircraft in the flight list or on the map, then use the command panel.
 
 | Flight | Commands, in order |
 |---|---|
-| Arrival | **LAND** (bottom of the holding stack only) → **TAXI** to a free gate. **GO AROUND** while landing aborts the approach and rejoins the hold. |
+| Arrival | **LAND** on **RWY 01L** or **RWY 01R** (bottom of the holding stack only) → **TAXI** to a free gate. **GO AROUND** while landing aborts the approach and rejoins the hold. |
 | Departure | **PUSHBACK** → **TAXI** to a holding point (several may queue) → **LINE UP** → **TAKEOFF** |
 | Taxiing | **HOLD** / **CONTINUE** (key `H`) to resolve head-on traffic |
 

@@ -36,8 +36,10 @@ test.describe('smoke', () => {
     expect(arrival, 'an arrival is holding at start').toBeTruthy();
     await rows.filter({ hasText: arrival!.callsign }).click();
     await expect(page.locator('.right-panel')).toContainText(arrival!.callsign);
-    await page.getByRole('button', { name: /Clear to land/ }).click();
+    // LAND offers one button per runway; pick 01R.
+    await page.getByRole('button', { name: 'RWY 01R' }).click();
     await expect.poll(() => statusOf(page, arrival!.callsign)).toBe('LANDING');
+    await expect(page.locator('.right-panel')).toContainText('Cleared to land RWY 01R');
     // The slot now offers a go-around instead.
     await expect(page.getByRole('button', { name: /Go around/ })).toBeEnabled();
 

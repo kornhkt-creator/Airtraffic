@@ -700,3 +700,34 @@ button {
   font-size: 13px;
   white-space: nowrap;
 }
+
+/* ---------- Runway signs (screen space, below each runway threshold) ---------- */
+.rwy-sign {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 3px 10px 4px;
+  border-radius: 6px;
+  background: #c62828;
+  border: 2px solid #ffffff;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  user-select: none;
+  line-height: 1.05;
+}
+.rwy-sign-id {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+.rwy-sign-use {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  opacity: 0.9;
+}
+.dest-grid.runway-grid .btn {
+  font-weight: 700;
+  font-size: 14px;
+}

@@ -59,7 +59,8 @@ export interface MissionSummary {
 export interface RunwayView {
   /** Designator in use, e.g. "01L". */
   designator: string;
-  use: 'ARRIVALS' | 'DEPARTURES';
+  /** ARRIVALS = landings only; MIXED = takeoffs plus landings cleared for it. */
+  use: 'ARRIVALS' | 'DEPARTURES' | 'MIXED';
   /** Callsigns of the aircraft occupying the runway. */
   occupiedBy: string[];
 }

@@ -74,22 +74,30 @@ function Details({ aircraft: a }: { aircraft: AircraftView }) {
 function CommandControl({ aircraftId, option }: { aircraftId: string; option: CommandOption }) {
   const controller = useGame();
 
-  if (option.type === 'TAXI') {
+  if (option.destinations) {
+    // TAXI picks a gate or holding point, LAND picks a runway.
+    const issue = (id: string) =>
+      option.type === 'TAXI'
+        ? controller.command({ type: 'TAXI', aircraftId, destinationId: id })
+        : option.type === 'LAND'
+          ? controller.command({ type: 'LAND', aircraftId, runwayId: id })
+          : undefined;
+    const verb = option.type === 'LAND' ? 'Land on' : 'Taxi to';
     return (
       <div className={`command-group ${option.enabled ? '' : 'disabled'}`}>
         <div className="command-label" title={option.reason}>
-          TAXI — {option.label}
+          {option.type} — {option.label}
         </div>
         {!option.enabled && option.reason && <div className="reason">{option.reason}</div>}
-        <div className="dest-grid">
-          {(option.destinations ?? []).map((d) => (
+        <div className={`dest-grid ${option.type === 'LAND' ? 'runway-grid' : ''}`}>
+          {option.destinations.map((d) => (
             <button
               type="button"
               key={d.id}
-              className="btn cmd"
+              className={`btn cmd ${option.type === 'LAND' ? 'primary' : ''}`}
               disabled={!d.enabled}
-              title={d.reason ?? `Taxi to ${d.label}`}
-              onClick={() => controller.command({ type: 'TAXI', aircraftId, destinationId: d.id })}
+              title={d.reason ?? `${verb} ${d.label}`}
+              onClick={() => issue(d.id)}
             >
               {d.label}
             </button>
@@ -100,6 +108,7 @@ function CommandControl({ aircraftId, option }: { aircraftId: string; option: Co
   }
 
   const type = option.type;
+  if (type === 'TAXI') return null; // TAXI always comes with destinations
   return (
     <div className={`command-group ${option.enabled ? '' : 'disabled'}`}>
       <button

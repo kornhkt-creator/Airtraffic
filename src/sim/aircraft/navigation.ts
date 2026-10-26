@@ -1,11 +1,12 @@
 import type { Aircraft, Vec2 } from '../types';
 import { SIM_CONFIG } from '../config';
-import { AIRPORT, type AirportLayout } from '../airport/layout';
+import { AIRPORT, type AirportLayout, type RunwayDef } from '../airport/layout';
+import { runwayOf } from '../safety/SafetySystem';
 import type { RouteManager } from '../airport/RouteManager';
 import { buildFilletedPath, buildRacetrackLoop } from '../path/builders';
 import { dubinsSegments } from '../path/dubins';
 import { lineSegment, Path, type PathMotion } from '../path/Path';
-import { distance, dot, fromAngle, normalize, sub } from '../math';
+import { clamp, distance, dot, fromAngle, normalize, sub } from '../math';
 
 const AIR_MOTION: PathMotion = { accel: SIM_CONFIG.air.accel, decel: SIM_CONFIG.air.decel };
 const TAXI_MOTION: PathMotion = { accel: SIM_CONFIG.ground.accel, decel: SIM_CONFIG.ground.taxiDecel };
@@ -49,17 +50,37 @@ export function glideAltitude(remainingToTouchdown: number): number {
   return Math.min(SIM_CONFIG.air.holdingAltitude, Math.max(0, remainingToTouchdown) * glideTan);
 }
 
-/** Curvature-bounded path from the aircraft's current pose to the FAF, then straight to touchdown. */
-export function planLanding(ac: Aircraft, layout: AirportLayout = AIRPORT): Path {
-  const { arrivalRunway: runway, approach } = layout;
-  const speed = SIM_CONFIG.air.approachSpeed;
-  const toFaf = dubinsSegments(
-    { position: ac.position, heading: ac.heading },
-    { position: approach.faf, heading: runway.heading },
-    SIM_CONFIG.air.turnRadius,
-    speed,
+/** Northernmost point where the downwind leg starts (also used for the on-screen guide). */
+const DOWNWIND_TOP_Y = 700;
+/** The downwind leg is at least this long before the turn onto the base leg. */
+const MIN_DOWNWIND = 900;
+
+/**
+ * The arrival route flown after a landing clearance, from a point on the downwind leg to touchdown:
+ * south along the downwind leg west of the holding pattern, east along the base leg south of the
+ * airport, then north onto final for `runway`. Corners are flown with the airborne turn radius.
+ */
+export function arrivalRoute(runway: RunwayDef, downwindStartY: number = DOWNWIND_TOP_Y, layout: AirportLayout = AIRPORT): Path {
+  const { downwindX, baseY } = layout.approach;
+  const air = SIM_CONFIG.air;
+  return buildFilletedPath(
+    [{ x: downwindX, y: downwindStartY }, { x: downwindX, y: baseY }, { x: runway.touchdown.x, y: baseY }, runway.touchdown],
+    // Airborne corners are flown at approach speed; only the radius bounds them.
+    { filletRadius: air.turnRadius, edgeSpeeds: air.approachSpeed, lateralAccel: 1e6, minTurnSpeed: air.approachSpeed, motion: AIR_MOTION },
   );
-  return new Path([...toFaf, lineSegment(approach.faf, runway.touchdown, speed)], AIR_MOTION);
+}
+
+/** Where an aircraft joins the downwind leg: a little ahead of it, so the join turn stays short. */
+function downwindJoinY(ac: Aircraft, layout: AirportLayout): number {
+  const southbound = Math.sin(ac.heading) < 0;
+  return clamp(ac.position.y + (southbound ? -400 : 400), layout.approach.baseY + MIN_DOWNWIND, DOWNWIND_TOP_Y);
+}
+
+/** Curvature-bounded join from the aircraft's current pose onto the arrival route for `runway`. */
+export function planLanding(ac: Aircraft, runway: RunwayDef = AIRPORT.arrivalRunway, layout: AirportLayout = AIRPORT): Path {
+  const route = arrivalRoute(runway, downwindJoinY(ac, layout), layout);
+  const join = dubinsSegments({ position: ac.position, heading: ac.heading }, route.startSample, SIM_CONFIG.air.turnRadius, SIM_CONFIG.air.approachSpeed);
+  return new Path([...join, ...route.segments], AIR_MOTION);
 }
 
 /** Ground traffic this close to an exit node blocks that exit for a landing rollout. */
@@ -69,8 +90,13 @@ const EXIT_BLOCK_RADIUS = 90;
  * Picks the first runway exit the aircraft can still slow down for, skipping exits where other
  * traffic is standing (e.g. an earlier arrival still waiting for taxi clearance).
  */
-export function chooseRunwayExit(position: Vec2, speed: number, routes: RouteManager, traffic: readonly Aircraft[] = []): { runwayNodeId: string; exitNodeId: string } {
-  const runway = routes.layout.arrivalRunway;
+export function chooseRunwayExit(
+  position: Vec2,
+  speed: number,
+  routes: RouteManager,
+  traffic: readonly Aircraft[] = [],
+  runway: RunwayDef = routes.layout.arrivalRunway,
+): { runwayNodeId: string; exitNodeId: string } {
   const g = SIM_CONFIG.ground;
   const turnSpeed = Math.sqrt(g.lateralAccel * g.filletRadius);
   const required = Math.max(0, speed * speed - turnSpeed * turnSpeed) / (2 * g.rolloutDecel) + g.filletRadius + g.exitMargin;
@@ -89,7 +115,7 @@ export function chooseRunwayExit(position: Vec2, speed: number, routes: RouteMan
 
 export function planRollout(ac: Aircraft, routes: RouteManager, traffic: readonly Aircraft[] = []): { path: Path; exitNodeId: string } {
   const g = SIM_CONFIG.ground;
-  const exit = chooseRunwayExit(ac.position, ac.speed, routes, traffic.filter((a) => a !== ac));
+  const exit = chooseRunwayExit(ac.position, ac.speed, routes, traffic.filter((a) => a !== ac), runwayOf(ac, routes.layout));
   const path = buildFilletedPath([ac.position, routes.node(exit.runwayNodeId).position, routes.node(exit.exitNodeId).position], {
     filletRadius: g.filletRadius,
     edgeSpeeds: [g.runwayMaxSpeed, g.maxTaxiSpeed],

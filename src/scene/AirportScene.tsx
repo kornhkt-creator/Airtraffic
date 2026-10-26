@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
+import { Html } from '@react-three/drei';
 import { DoubleSide, Object3D, type InstancedMesh } from 'three';
 import { AIRPORT, LAYOUT_X, LAYOUT_Y, type RunwayDef } from '../sim/airport/layout';
 import { Rng } from '../sim/rng';
@@ -125,9 +126,24 @@ function Runway({ runway }: { runway: RunwayDef }) {
         <meshStandardMaterial color={COLORS.runway} />
       </mesh>
       <FlatRects rects={markings} color={COLORS.white} height={H.marking} />
-      <GroundText text={runway.designators[0]} x={-half + 75} y={0} upAngle={0} width={24} length={30} />
-      <GroundText text={runway.designators[1]} x={half - 75} y={0} upAngle={Math.PI} width={24} length={30} />
+      {/* Designators painted large, just past the threshold piano keys. */}
+      <GroundText text={runway.designators[0]} x={-half + 100} y={0} upAngle={0} width={46} length={80} />
+      <GroundText text={runway.designators[1]} x={half - 100} y={0} upAngle={Math.PI} width={46} length={80} />
     </group>
+  );
+}
+
+/** Screen-space runway sign below the threshold in use, readable at any zoom. */
+function RunwaySign({ runway, use }: { runway: RunwayDef; use: string }) {
+  const dir = { x: Math.cos(runway.heading), y: Math.sin(runway.heading) };
+  const at = { x: runway.start.x - dir.x * 110, y: runway.start.y - dir.y * 110 };
+  return (
+    <Html position={toScene(at, 2)} center zIndexRange={[10, 0]}>
+      <div className="rwy-sign">
+        <span className="rwy-sign-id">{runway.designators[0]}</span>
+        <span className="rwy-sign-use">{use}</span>
+      </div>
+    </Html>
   );
 }
 
@@ -307,6 +323,8 @@ export function AirportScene() {
       </mesh>
       <Runway runway={AIRPORT.arrivalRunway} />
       <Runway runway={AIRPORT.departureRunway} />
+      <RunwaySign runway={AIRPORT.arrivalRunway} use="ARR" />
+      <RunwaySign runway={AIRPORT.departureRunway} use="DEP / ARR" />
       <Taxiways />
       <HoldShortMarkings />
       <ApronAndStands />

@@ -314,6 +314,7 @@ export class Simulation implements SimWorld {
       divertWarned: false,
       gateTime: 0,
       delayPenalties: 0,
+      runwayId: null,
       conflict: false,
       taxiHold: false,
     };
@@ -503,7 +504,7 @@ export class Simulation implements SimWorld {
     const { layout } = this.routes;
     return [
       { runway: layout.arrivalRunway, use: 'ARRIVALS' as const },
-      { runway: layout.departureRunway, use: 'DEPARTURES' as const },
+      { runway: layout.departureRunway, use: 'MIXED' as const },
     ].map(({ runway, use }) => ({
       designator: runway.designators[0],
       use,

@@ -1,5 +1,6 @@
 import type { Aircraft, Command, CommandType, SimpleCommandType } from './types';
 import type { SimWorld } from './world';
+import type { RunwayDef } from './airport/layout';
 import { SIM_CONFIG } from './config';
 import { distance, dot, fromAngle, normalize, sub } from './math';
 import { transition } from './aircraft/AircraftStateMachine';
@@ -50,13 +51,22 @@ function requireType(ac: Aircraft, type: Aircraft['flightType'], action: string)
   return ac.flightType === type ? null : reject(`${ac.callsign} is ${ac.flightType === 'ARRIVAL' ? 'an arrival' : 'a departure'} — ${action} is not applicable.`);
 }
 
-export function validateLand(world: SimWorld, ac: Aircraft): Validation {
+/** Runway a LAND clearance refers to (default: the arrival runway), or null if unknown. */
+function landingRunway(world: SimWorld, runwayId?: string): RunwayDef | null {
+  const { layout } = world.routes;
+  return runwayId === undefined ? layout.arrivalRunway : (layout.runways.find((r) => r.id === runwayId) ?? null);
+}
+
+export function validateLand(world: SimWorld, ac: Aircraft, runwayId?: string): Validation {
+  const runway = landingRunway(world, runwayId);
+  if (!runway) return reject(`Unknown runway ${runwayId}.`);
   const base = checkGame(world) ?? requireType(ac, 'ARRIVAL', 'landing clearance') ?? requireStatus(ac, 'APPROACH', 'landing clearance');
   if (base) return base;
   // Only the bottom of the holding stack can make the glide path in time.
   if ((ac.holdingLevel ?? 0) > 0) return reject(`${ac.callsign} is at holding level ${(ac.holdingLevel ?? 0) + 1} — only the lowest aircraft in the stack can be cleared to land.`);
   if (ac.altitude > levelAltitude(0) + SIM_CONFIG.air.landingAltitudeTolerance) return reject(`${ac.callsign} is still descending to the bottom of the holding stack.`);
-  return checkRunway(world, ac) ?? { ok: true };
+  const occupant = getRunwayOccupants(world.aircraft, runway, world.routes.layout).find((a) => a.id !== ac.id);
+  return occupant ? reject(`Runway ${runway.designators[0]} is occupied by ${occupant.callsign}.`) : { ok: true };
 }
 
 export function validatePushback(world: SimWorld, ac: Aircraft): Validation {
@@ -173,7 +183,7 @@ export function validateCommand(world: SimWorld, cmd: Command): Validation {
   if (!ac) return reject(`Unknown aircraft ${cmd.aircraftId}.`);
   switch (cmd.type) {
     case 'LAND':
-      return validateLand(world, ac);
+      return validateLand(world, ac, cmd.runwayId);
     case 'PUSHBACK':
       return validatePushback(world, ac);
     case 'TAXI':
@@ -202,8 +212,11 @@ export function executeCommand(world: SimWorld, cmd: Command, validation: Valida
       transition(ac, 'LANDING', emit);
       // The stack level is released by compactHoldingStack once the aircraft is clear below it.
       // The holding (fuel) clock is not reset: a go-around returns to the hold with what it had used.
-      assignPath(ac, planLanding(ac, world.routes.layout), 'approach', SIM_CONFIG.air.touchdownSpeed);
-      return `${ac.callsign}, cleared to land runway ${rwy}.`;
+      const runway = landingRunway(world, cmd.runwayId);
+      if (!runway) throw new Error('LAND executed for an unknown runway');
+      ac.runwayId = runway.id;
+      assignPath(ac, planLanding(ac, runway, world.routes.layout), 'approach', SIM_CONFIG.air.touchdownSpeed);
+      return `${ac.callsign}, cleared to land runway ${runway.designators[0]}.`;
     }
     case 'GO_AROUND': {
       transition(ac, 'GO_AROUND', emit);
@@ -315,11 +328,23 @@ function taxiOption(world: SimWorld, ac: Aircraft): CommandOption {
     : { type: 'TAXI', label, enabled: false, reason: destinations[0]?.reason ?? 'No destination available.', destinations };
 }
 
+/** LAND with one choice per runway. */
+function landOption(world: SimWorld, ac: Aircraft): CommandOption {
+  const destinations: DestinationOption[] = world.routes.layout.runways.map((r) => {
+    const v = validateLand(world, ac, r.id);
+    const label = `RWY ${r.designators[0]}`;
+    return v.ok ? { id: r.id, label, enabled: true } : { id: r.id, label, enabled: false, reason: v.reason };
+  });
+  return destinations.some((d) => d.enabled)
+    ? { type: 'LAND', label: SIMPLE_LABELS.LAND, enabled: true, destinations }
+    : { type: 'LAND', label: SIMPLE_LABELS.LAND, enabled: false, reason: destinations[0]?.reason ?? 'No runway available.', destinations };
+}
+
 /** Every command relevant to the aircraft, in flow order, with whether it is currently allowed. */
 export function getCommandOptions(world: SimWorld, ac: Aircraft): CommandOption[] {
   // Hold and continue share one slot: whichever applies right now.
   const hold = simpleOption(world, ac, ac.taxiHold ? 'CONTINUE' : 'HOLD');
   // Landing clearance and go-around share one slot as well.
-  if (ac.flightType === 'ARRIVAL') return [simpleOption(world, ac, ac.status === 'LANDING' ? 'GO_AROUND' : 'LAND'), taxiOption(world, ac), hold];
+  if (ac.flightType === 'ARRIVAL') return [ac.status === 'LANDING' ? simpleOption(world, ac, 'GO_AROUND') : landOption(world, ac), taxiOption(world, ac), hold];
   return [simpleOption(world, ac, 'PUSHBACK'), taxiOption(world, ac), hold, simpleOption(world, ac, 'LINE_UP'), simpleOption(world, ac, 'TAKEOFF')];
 }

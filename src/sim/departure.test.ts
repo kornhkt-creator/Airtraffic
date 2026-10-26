@@ -195,7 +195,7 @@ describe('Departure command validation', () => {
     ok(sim, { type: 'LINE_UP', aircraftId: dep.id });
     const runways = sim.snapshot().runways;
     expect(runways.find((r) => r.use === 'ARRIVALS')?.occupiedBy).toEqual([arr.callsign]);
-    expect(runways.find((r) => r.use === 'DEPARTURES')?.occupiedBy).toEqual([dep.callsign]);
+    expect(runways.find((r) => r.use === 'MIXED')?.occupiedBy).toEqual([dep.callsign]);
 
     // But each runway takes one aircraft at a time.
     runUntil(sim, () => arr.status === 'LANDED');
