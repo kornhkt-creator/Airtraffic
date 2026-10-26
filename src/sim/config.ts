@@ -121,6 +121,18 @@ export const SIM_CONFIG = {
     followGap: 115,
     /** Taxiing aircraft closing head-on within this distance trigger a warning. */
     headOnLookahead: 450,
+    /** Opposite-direction use of the same taxiway segment within this route distance is warned early. */
+    headOnRouteLookahead: 800,
+    /**
+     * Airborne separation warning (a warning only, never game over): both aircraft above
+     * `airMinAltitude`, closer than `airHorizontal` laterally and `airVertical` vertically. The
+     * vertical limit stays below the 200 m holding-stack spacing so a normal stack never warns.
+     */
+    airHorizontal: 600,
+    airVertical: 150,
+    airMinAltitude: 30,
+    /** A ground aircraft whose reference point is this close to a runway centerline is on the runway. */
+    runwayStripHalfWidth: 45,
   },
 
   scoring: {

@@ -8,8 +8,8 @@ import { SimulationClock } from './SimulationClock';
 import { Rng } from './rng';
 import { ScoringSystem } from './ScoringSystem';
 import { executeCommand, getCommandOptions, validateCommand, type CommandOption } from './CommandSystem';
-import { getRunwayOccupants, runwayOf } from './safety/SafetySystem';
-import { findCollisions, findHeadOn, findProximities } from './safety/CollisionSystem';
+import { findRunwayIncursions, getRunwayOccupants, runwayOf } from './safety/SafetySystem';
+import { findAirConflicts, findCollisions, findHeadOn, findProximities, findRouteConflicts } from './safety/CollisionSystem';
 import { transition } from './aircraft/AircraftStateMachine';
 import { updateAircraft } from './aircraft/AircraftAI';
 import { assignPath } from './aircraft/MovementSystem';
@@ -50,8 +50,8 @@ export class Simulation implements SimWorld {
   private events: SimEvent[] = [];
   private nextAircraftNumber = 1;
   private nextAlertId = 1;
-  /** Pairs currently in conflict, so each new conflict is announced once. */
-  private conflictPairs = new Set<string>();
+  /** Conflicts active last tick → their alert id, so each is announced once and stays visible while it lasts. */
+  private conflictAlerts = new Map<string, number>();
 
   constructor(options: SimulationOptions = {}) {
     this.seed = options.seed ?? 1;
@@ -72,7 +72,7 @@ export class Simulation implements SimWorld {
     this.aircraft = [];
     this.alerts = [];
     this.crash = null;
-    this.conflictPairs.clear();
+    this.conflictAlerts.clear();
     this.events = [];
     this.nextAircraftNumber = 1;
     this.nextAlertId = 1;
@@ -167,24 +167,48 @@ export class Simulation implements SimWorld {
   /** Flags aircraft that are dangerously close and announces each new conflict once. */
   private updateConflicts(): void {
     for (const ac of this.aircraft) ac.conflict = false;
-    const active = new Set<string>();
+    const active = new Map<string, number>();
+    const raise = (key: string, message: string, aircraftId: string): void => {
+      if (active.has(key)) return; // already reported this tick by another detector
+      const id = this.conflictAlerts.get(key);
+      const alert = id === undefined ? undefined : this.alerts.find((x) => x.id === id);
+      if (alert) {
+        // Still in conflict: keep the warning on screen until it is resolved.
+        alert.expiresAt = this.time + SIM_CONFIG.alerts.warningTtl * this.clock.timeScale;
+        active.set(key, alert.id);
+      } else if (id !== undefined) {
+        active.set(key, id);
+      } else {
+        active.set(key, this.pushAlert('warning', message, aircraftId));
+      }
+    };
     for (const { a, b } of findProximities(this.aircraft, SIM_CONFIG.safety.conflictBuffer)) {
       // Two stationary aircraft cannot close in on each other.
       if (a.speed < 0.1 && b.speed < 0.1) continue;
       a.conflict = true;
       b.conflict = true;
       const key = [a.id, b.id].sort().join('|');
-      active.add(key);
-      if (!this.conflictPairs.has(key)) this.pushAlert('warning', `Traffic conflict — ${a.callsign} and ${b.callsign} are dangerously close!`, a.id);
+      raise(key, `Traffic conflict — ${a.callsign} and ${b.callsign} are dangerously close!`, a.id);
     }
-    for (const { a, b } of findHeadOn(this.aircraft)) {
+    const headOn = [...findRouteConflicts(this.aircraft, this.routes), ...findHeadOn(this.aircraft)];
+    for (const { a, b } of headOn) {
       a.conflict = true;
       b.conflict = true;
       const key = `head-on|${[a.id, b.id].sort().join('|')}`;
-      active.add(key);
-      if (!this.conflictPairs.has(key)) this.pushAlert('warning', `Head-on traffic — ${a.callsign} and ${b.callsign} are taxiing toward each other. Hold one of them!`, a.id);
+      raise(key, `Head-on traffic — ${a.callsign} and ${b.callsign} are taxiing toward each other. Hold one of them!`, a.id);
     }
-    this.conflictPairs = active;
+    for (const { a, b } of findAirConflicts(this.aircraft)) {
+      a.conflict = true;
+      b.conflict = true;
+      const key = `air|${[a.id, b.id].sort().join('|')}`;
+      raise(key, `Separation lost — ${a.callsign} and ${b.callsign} are too close in the air.`, a.id);
+    }
+    for (const { ac, runway } of findRunwayIncursions(this.aircraft, this.routes.layout)) {
+      ac.conflict = true;
+      const key = `incursion|${ac.id}|${runway.id}`;
+      raise(key, `RUNWAY INCURSION — ${ac.callsign} is on runway ${runway.designators[0]} without clearance!`, ac.id);
+    }
+    this.conflictAlerts = active;
   }
 
   // ---- World access ----------------------------------------------------------------------
@@ -344,12 +368,14 @@ export class Simulation implements SimWorld {
     }
   }
 
-  pushAlert(severity: AlertSeverity, message: string, aircraftId: string | null = null): void {
+  /** Adds an alert and returns its id. */
+  pushAlert(severity: AlertSeverity, message: string, aircraftId: string | null = null): number {
     const baseTtl = severity === 'critical' ? null : severity === 'warning' ? SIM_CONFIG.alerts.warningTtl : SIM_CONFIG.alerts.infoTtl;
     // TTLs are in sim seconds; scale them so alerts stay readable for the same real time at 2x/4x.
     const ttl = baseTtl === null ? null : baseTtl * this.clock.timeScale;
+    const id = this.nextAlertId++;
     this.alerts.unshift({
-      id: this.nextAlertId++,
+      id,
       severity,
       message,
       time: this.time,
@@ -357,6 +383,7 @@ export class Simulation implements SimWorld {
       aircraftId,
     });
     this.alerts = this.alerts.slice(0, SIM_CONFIG.alerts.maxAlerts);
+    return id;
   }
 
   // ---- Read models -----------------------------------------------------------------------
@@ -406,6 +433,8 @@ export class Simulation implements SimWorld {
       }
       case 'TAXIING':
         if (ac.taxiHold) return `Holding position${ac.destinationId ? ` — cleared to ${this.routes.label(ac.destinationId)} when released` : ''}`;
+        // Stopped by the ground follow logic (e.g. queued for departure).
+        if (ac.speed < 0.1 && ac.nav.path) return `Waiting behind traffic${ac.destinationId ? ` — then ${this.routes.label(ac.destinationId)}` : ''}`;
         return ac.destinationId ? `Taxiing to ${this.routes.label(ac.destinationId)} via ${this.routes.describeRoute(ac.routeNodeIds)}` : 'Taxiing';
       case 'AT_GATE': {
         const gate = ac.gateId ? this.routes.label(ac.gateId) : 'gate';

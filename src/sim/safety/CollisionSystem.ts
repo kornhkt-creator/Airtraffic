@@ -1,4 +1,5 @@
 import type { Aircraft, Vec2 } from '../types';
+import type { RouteManager } from '../airport/RouteManager';
 import { SIM_CONFIG } from '../config';
 import { clamp, cross, dot, fromAngle, sub } from '../math';
 
@@ -106,25 +107,134 @@ function aheadOf(ac: Aircraft, other: Aircraft, lookahead: number = SIM_CONFIG.s
   return along;
 }
 
+/** Spacing of the probe points along an aircraft's own route. */
+const ROUTE_PROBE_STEP = 10;
+
+/** Points along the aircraft's remaining route within the lookahead, with their route distance. */
+function routeProbes(ac: Aircraft, lookahead: number): { d: number; p: Vec2 }[] {
+  const path = ac.nav.path;
+  if (!path) return [];
+  const remaining = path.loop ? lookahead : Math.min(lookahead, path.length - ac.nav.s);
+  const probes: { d: number; p: Vec2 }[] = [];
+  for (let d = ROUTE_PROBE_STEP; d < remaining + ROUTE_PROBE_STEP; d += ROUTE_PROBE_STEP) {
+    const along = Math.min(d, remaining);
+    probes.push({ d: along, p: path.sample(ac.nav.s + along).position });
+  }
+  return probes;
+}
+
+/**
+ * Route distance to the first point of `ac`'s own route that passes within the follow corridor of
+ * `other`, or null. Following the route (not just the heading) lets taxiing aircraft see traffic
+ * around corners, e.g. a departure waiting at the holding point at the end of a turn.
+ */
+function routeDistanceTo(ac: Aircraft, other: Aircraft, probes: readonly { d: number; p: Vec2 }[]): number | null {
+  if (probes.length === 0) return aheadOf(ac, other);
+  const { followCorridor } = SIM_CONFIG.safety;
+  for (const { d, p } of probes) {
+    if (Math.hypot(p.x - other.position.x, p.y - other.position.y) < followCorridor) return d;
+  }
+  return null;
+}
+
 /**
  * Simple ground follow logic (a safety aid, not a replacement for the controller): a taxiing
- * aircraft slows to keep its distance from ground traffic ahead. When two taxiing aircraft each
- * see the other ahead (crossing or head-on), the one with the lower id keeps going so they never
+ * aircraft slows to keep its distance from ground traffic on its route ahead, which also makes
+ * departures queue behind each other at a holding point. When two taxiing aircraft each find the
+ * other on their route (crossing or head-on), the one with the lower id keeps going so they never
  * deadlock — head-on traffic therefore still collides, which is the controller's call to prevent.
  */
 export function followSpeedCap(ac: Aircraft, aircraft: readonly Aircraft[]): number {
-  const { followGap } = SIM_CONFIG.safety;
+  const { followGap, followLookahead } = SIM_CONFIG.safety;
   const decel = SIM_CONFIG.ground.taxiDecel;
+  const probes = routeProbes(ac, followLookahead);
   let cap = Infinity;
   for (const other of aircraft) {
     if (other === ac || !isOnGround(other)) continue;
-    const along = aheadOf(ac, other);
+    const along = routeDistanceTo(ac, other, probes);
     if (along === null) continue;
-    const mutual = other.status === 'TAXIING' && !other.taxiHold && aheadOf(other, ac) !== null;
+    const mutual = other.status === 'TAXIING' && !other.taxiHold && routeDistanceTo(other, ac, routeProbes(other, followLookahead)) !== null;
     if (mutual && ac.id < other.id) continue;
     cap = Math.min(cap, Math.sqrt(2 * decel * Math.max(0, along - followGap)));
   }
   return cap;
+}
+
+/** Airborne pairs that have lost the configured separation (warning, not a collision). */
+export function findAirConflicts(aircraft: readonly Aircraft[]): AircraftPair[] {
+  const { airHorizontal, airVertical, airMinAltitude } = SIM_CONFIG.safety;
+  const airborne = aircraft.filter((a) => isPhysical(a) && a.altitude > airMinAltitude);
+  const pairs: AircraftPair[] = [];
+  for (let i = 0; i < airborne.length; i++) {
+    for (let j = i + 1; j < airborne.length; j++) {
+      const a = airborne[i]!;
+      const b = airborne[j]!;
+      const horizontal = Math.hypot(a.position.x - b.position.x, a.position.y - b.position.y);
+      if (horizontal < airHorizontal && Math.abs(a.altitude - b.altitude) < airVertical) pairs.push({ a, b, gap: horizontal });
+    }
+  }
+  return pairs;
+}
+
+interface RouteEdgeAhead {
+  from: string;
+  to: string;
+  /** Route distance from the aircraft to the start of this edge (0 for the edge it is on). */
+  distance: number;
+}
+
+/**
+ * The directed taxi-route edges an aircraft still has to travel: the edge it is on and the rest of
+ * its route, including a route queued behind a rollout or pushback.
+ */
+export function remainingRouteEdges(ac: Aircraft, routes: RouteManager): RouteEdgeAhead[] {
+  const queued = ac.pendingRoute !== null && (ac.status === 'LANDED' || ac.status === 'PUSHBACK');
+  const route = queued ? ac.pendingRoute! : ac.status === 'TAXIING' ? ac.routeNodeIds : [];
+  if (route.length < 2) return [];
+  const pts = routes.positions(route);
+  // The edge the aircraft is on is the route segment closest to it (routes never overlap themselves).
+  let current = 0;
+  let best = Infinity;
+  if (!queued) {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const d = pointSegmentDistance(ac.position, pts[i]!, pts[i + 1]!);
+      if (d < best) {
+        best = d;
+        current = i;
+      }
+    }
+  }
+  const edges: RouteEdgeAhead[] = [];
+  let distance = queued ? Math.hypot(ac.position.x - pts[0]!.x, ac.position.y - pts[0]!.y) : 0;
+  for (let i = current; i < pts.length - 1; i++) {
+    edges.push({ from: route[i]!, to: route[i + 1]!, distance });
+    const a = i === current && !queued ? ac.position : pts[i]!;
+    distance += Math.hypot(pts[i + 1]!.x - a.x, pts[i + 1]!.y - a.y);
+  }
+  return edges;
+}
+
+/**
+ * Ground traffic cleared along the same taxiway segment in opposite directions within the route
+ * lookahead. Nobody can reverse on a taxiway, so this predicts a head-on meeting well before the
+ * aircraft see each other — the controller has to hold one of them clear of that segment.
+ */
+export function findRouteConflicts(aircraft: readonly Aircraft[], routes: RouteManager): AircraftPair[] {
+  const { headOnRouteLookahead } = SIM_CONFIG.safety;
+  const planned = aircraft
+    .filter((a) => isOnGround(a))
+    .map((a) => ({ a, edges: remainingRouteEdges(a, routes).filter((e) => e.distance < headOnRouteLookahead) }))
+    .filter((x) => x.edges.length > 0);
+  const pairs: AircraftPair[] = [];
+  for (let i = 0; i < planned.length; i++) {
+    for (let j = i + 1; j < planned.length; j++) {
+      const p = planned[i]!;
+      const q = planned[j]!;
+      const meet = p.edges.find((e) => q.edges.some((f) => f.from === e.to && f.to === e.from));
+      if (meet) pairs.push({ a: p.a, b: q.a, gap: meet.distance });
+    }
+  }
+  return pairs;
 }
 
 /**

@@ -25,7 +25,7 @@ npm run build
 - [x] 1. Vertical slice: one airport, one arrival, smooth navigation, selection, LAND and TAXI commands
 - [x] 2. Departures: pushback, taxi to holding point, line up, takeoff
 - [x] 3. Spawning multiple flights, difficulty curve, diversions
-- [ ] 4. Safety: separation warnings, runway incursions, collisions, GAME_OVER
+- [x] 4. Safety: separation warnings, runway incursions, collisions, GAME_OVER, departure queuing
 - [ ] 5. Scoring penalties, end screen, polish, Playwright smoke test
 
 Simplified game rules — not a real or certified air traffic control system.

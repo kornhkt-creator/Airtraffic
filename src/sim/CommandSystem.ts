@@ -5,8 +5,8 @@ import { distance, dot, fromAngle, normalize, sub } from './math';
 import { transition } from './aircraft/AircraftStateMachine';
 import { assignPath } from './aircraft/MovementSystem';
 import { beginTaxi } from './aircraft/AircraftAI';
-import { apronNodeOf, planLanding, planLineUp, planPushback, planTakeoff } from './aircraft/navigation';
-import { isRunwayAvailableFor, runwayOf } from './safety/SafetySystem';
+import { apronNodeOf, planLanding, planLineUp, planPushback, planTakeoff, runwayEntryOf } from './aircraft/navigation';
+import { getRunwayOccupants, isRunwayAvailableFor, runwayOf } from './safety/SafetySystem';
 import { levelAltitude } from './aircraft/holdingStack';
 
 export type Validation = { ok: true; route?: string[] } | { ok: false; reason: string };
@@ -95,11 +95,10 @@ export function validateTaxi(world: SimWorld, ac: Aircraft, destinationId: strin
   const dest = routes.node(destinationId);
   if (ac.flightType === 'ARRIVAL' && dest.kind !== 'gate') return reject('Arrivals must taxi to a gate.');
   if (ac.flightType === 'DEPARTURE' && dest.kind !== 'holdingPoint') return reject('Departures must taxi to a runway holding point.');
-  const blocker = world.aircraft.find(
-    (a) => a.id !== ac.id && (a.gateId === destinationId || a.holdingPointId === destinationId || a.destinationId === destinationId),
-  );
+  // Gates take one aircraft; holding points queue departures (ground follow logic keeps the spacing).
+  const blocker = dest.kind === 'gate' ? world.aircraft.find((a) => a.id !== ac.id && (a.gateId === destinationId || a.destinationId === destinationId)) : undefined;
   if (blocker) {
-    const occupied = blocker.gateId === destinationId || blocker.holdingPointId === destinationId;
+    const occupied = blocker.gateId === destinationId;
     return reject(`${routes.label(destinationId)} is ${occupied ? 'occupied' : 'reserved'} by ${blocker.callsign}.`);
   }
   const route = routes.findRoute(start.node, destinationId);
@@ -117,7 +116,31 @@ export function validateLineUp(world: SimWorld, ac: Aircraft): Validation {
   const base = checkGame(world) ?? requireType(ac, 'DEPARTURE', 'line up') ?? requireStatus(ac, 'HOLDING', 'line up');
   if (base) return base;
   if (!ac.holdingPointId) return reject(`${ac.callsign} is not at a runway holding point.`);
-  return checkRunway(world, ac) ?? { ok: true };
+  return checkLineUpRunway(world, ac, ac.holdingPointId) ?? { ok: true };
+}
+
+/**
+ * Line up and wait is allowed behind a departure that is already rolling (or climbing) further down
+ * the runway; TAKEOFF then waits until that traffic is clear. Lining up anywhere else on an occupied
+ * runway — in particular in front of an aircraft on its takeoff roll — would be a runway incursion.
+ */
+function checkLineUpRunway(world: SimWorld, ac: Aircraft, holdingPointId: string): Validation | null {
+  const { layout } = world.routes;
+  const runway = runwayOf(ac, layout);
+  const dir = fromAngle(runway.heading);
+  const entry = world.routes.node(runwayEntryOf(holdingPointId, world.routes)).position;
+  const lineUpPoint = { x: entry.x + dir.x * SIM_CONFIG.ground.lineUpDistance, y: entry.y + dir.y * SIM_CONFIG.ground.lineUpDistance };
+  const minLead = SIM_CONFIG.aircraft.length * 2;
+  for (const occ of getRunwayOccupants(world.aircraft, runway, layout)) {
+    if (occ.id === ac.id) continue;
+    const lead = dot(sub(occ.position, lineUpPoint), dir);
+    if (occ.status === 'TAKEOFF' && lead > minLead) continue;
+    if (occ.status === 'TAKEOFF' && lead < 0) {
+      return reject(`${occ.callsign} is on its takeoff roll toward ${world.routes.label(holdingPointId)} — lining up in front of it would be a runway incursion.`);
+    }
+    return reject(`Runway ${runway.designators[0]} is occupied by ${occ.callsign}.`);
+  }
+  return null;
 }
 
 export function validateTakeoff(world: SimWorld, ac: Aircraft): Validation {
@@ -201,7 +224,9 @@ export function executeCommand(world: SimWorld, cmd: Command, validation: Valida
         beginTaxi(world, ac, route);
       }
       const via = world.routes.describeRoute(route);
-      return `${ac.callsign}, taxi to ${world.routes.label(cmd.destinationId)}${via ? ` via ${via}` : ''}.`;
+      const sequence = departureSequence(world, ac, cmd.destinationId);
+      const queue = sequence > 1 ? `, number ${sequence} for departure` : '';
+      return `${ac.callsign}, taxi to ${world.routes.label(cmd.destinationId)}${via ? ` via ${via}` : ''}${queue}.`;
     }
     case 'LINE_UP': {
       if (!ac.holdingPointId) throw new Error('LINE_UP executed away from a holding point');
@@ -252,12 +277,21 @@ function simpleOption(world: SimWorld, ac: Aircraft, type: SimpleCommandType): C
   return v.ok ? { type, label: SIMPLE_LABELS[type], enabled: true } : { type, label: SIMPLE_LABELS[type], enabled: false, reason: v.reason };
 }
 
+/**
+ * Position this aircraft would take in the departure queue for a holding point: 1 + everyone already
+ * waiting there or taxiing to it.
+ */
+export function departureSequence(world: SimWorld, ac: Aircraft, holdingPointId: string): number {
+  return 1 + world.aircraft.filter((a) => a.id !== ac.id && (a.holdingPointId === holdingPointId || a.destinationId === holdingPointId)).length;
+}
+
 function taxiOption(world: SimWorld, ac: Aircraft): CommandOption {
   const { layout } = world.routes;
   const ids = ac.flightType === 'ARRIVAL' ? layout.gateIds : layout.holdingPointIds;
   const destinations: DestinationOption[] = ids.map((id) => {
     const v = validateTaxi(world, ac, id);
-    const label = world.routes.label(id);
+    const queued = ac.flightType === 'DEPARTURE' && ac.destinationId !== id ? departureSequence(world, ac, id) : 1;
+    const label = queued > 1 ? `${world.routes.label(id)} (#${queued})` : world.routes.label(id);
     return v.ok ? { id, label, enabled: true } : { id, label, enabled: false, reason: v.reason };
   });
   const label = ac.flightType === 'ARRIVAL' ? 'Taxi to gate' : 'Taxi to holding point';
