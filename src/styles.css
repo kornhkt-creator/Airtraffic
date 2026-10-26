@@ -501,6 +501,8 @@ button {
   place-items: center;
   background: rgba(5, 10, 20, 0.55);
   backdrop-filter: blur(2px);
+  /* Above the 3D callsign labels (drei Html uses z-index up to 20). */
+  z-index: 50;
 }
 
 .modal {
@@ -654,6 +656,27 @@ button {
   margin: 2px 0 0;
   font-size: 20px;
   font-weight: 700;
+}
+.game-over .modal {
+  max-height: calc(100% - 32px);
+  overflow-y: auto;
+}
+.game-over.shift-ended .modal {
+  border-color: rgba(52, 211, 153, 0.5);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+.game-over-kicker.shift {
+  color: var(--ok);
+}
+.summary.incidents {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 8px;
+}
+.summary.incidents dd {
+  font-size: 16px;
+}
+.summary.incidents .has-incidents dd {
+  color: var(--warn);
 }
 .game-over-actions {
   display: flex;

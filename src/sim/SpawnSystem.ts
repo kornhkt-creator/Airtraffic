@@ -36,7 +36,7 @@ function rampInterval(range: { start: readonly number[]; end: readonly number[] 
 }
 
 const isFinished = (a: Aircraft): boolean => a.status === 'DEPARTED' || a.status === 'DIVERTED' || a.status === 'CRASHED';
-const isAirborneArrival = (a: Aircraft): boolean => a.flightType === 'ARRIVAL' && (a.status === 'APPROACH' || a.status === 'LANDING');
+const isAirborneArrival = (a: Aircraft): boolean => a.flightType === 'ARRIVAL' && (a.status === 'APPROACH' || a.status === 'LANDING' || a.status === 'GO_AROUND');
 
 /** Flights the controller still has to handle (parked arrivals are done). */
 export const isActiveFlight = (a: Aircraft): boolean => !isFinished(a) && !(a.flightType === 'ARRIVAL' && a.status === 'AT_GATE');

@@ -5,9 +5,9 @@ import { distance, dot, fromAngle, normalize, sub } from './math';
 import { transition } from './aircraft/AircraftStateMachine';
 import { assignPath } from './aircraft/MovementSystem';
 import { beginTaxi } from './aircraft/AircraftAI';
-import { apronNodeOf, planLanding, planLineUp, planPushback, planTakeoff, runwayEntryOf } from './aircraft/navigation';
+import { apronNodeOf, planGoAround, planLanding, planLineUp, planPushback, planTakeoff, runwayEntryOf } from './aircraft/navigation';
 import { getRunwayOccupants, isRunwayAvailableFor, runwayOf } from './safety/SafetySystem';
-import { levelAltitude } from './aircraft/holdingStack';
+import { freeHoldingLevel, levelAltitude } from './aircraft/holdingStack';
 
 export type Validation = { ok: true; route?: string[] } | { ok: false; reason: string };
 
@@ -143,6 +143,10 @@ function checkLineUpRunway(world: SimWorld, ac: Aircraft, holdingPointId: string
   return null;
 }
 
+export function validateGoAround(world: SimWorld, ac: Aircraft): Validation {
+  return checkGame(world) ?? requireType(ac, 'ARRIVAL', 'a go-around') ?? requireStatus(ac, 'LANDING', 'a go-around') ?? { ok: true };
+}
+
 export function validateTakeoff(world: SimWorld, ac: Aircraft): Validation {
   const base = checkGame(world) ?? requireType(ac, 'DEPARTURE', 'takeoff clearance') ?? requireStatus(ac, 'LINE_UP', 'takeoff clearance');
   if (base) return base;
@@ -178,6 +182,8 @@ export function validateCommand(world: SimWorld, cmd: Command): Validation {
       return validateLineUp(world, ac);
     case 'TAKEOFF':
       return validateTakeoff(world, ac);
+    case 'GO_AROUND':
+      return validateGoAround(world, ac);
     case 'HOLD':
       return validateHold(world, ac);
     case 'CONTINUE':
@@ -195,9 +201,16 @@ export function executeCommand(world: SimWorld, cmd: Command, validation: Valida
     case 'LAND': {
       transition(ac, 'LANDING', emit);
       // The stack level is released by compactHoldingStack once the aircraft is clear below it.
+      // The holding (fuel) clock is not reset: a go-around returns to the hold with what it had used.
       assignPath(ac, planLanding(ac, world.routes.layout), 'approach', SIM_CONFIG.air.touchdownSpeed);
-      ac.waitTime = 0;
       return `${ac.callsign}, cleared to land runway ${rwy}.`;
+    }
+    case 'GO_AROUND': {
+      transition(ac, 'GO_AROUND', emit);
+      // Keep the stack level if it still has one; otherwise take a free one (or wait above the stack).
+      if (ac.holdingLevel === null) ac.holdingLevel = freeHoldingLevel(world.aircraft);
+      assignPath(ac, planGoAround(ac, world.holdingLoop), 'goaround', SIM_CONFIG.air.approachSpeed);
+      return `${ac.callsign}, go around — climb straight ahead, then rejoin the hold.`;
     }
     case 'PUSHBACK': {
       if (!ac.gateId) throw new Error('PUSHBACK executed without a gate');
@@ -256,6 +269,7 @@ export function executeCommand(world: SimWorld, cmd: Command, validation: Valida
 
 const SIMPLE_LABELS: Record<SimpleCommandType, string> = {
   LAND: 'Clear to land',
+  GO_AROUND: 'Go around',
   PUSHBACK: 'Approve pushback',
   LINE_UP: 'Line up and wait',
   TAKEOFF: 'Clear for takeoff',
@@ -268,6 +282,7 @@ const SIMPLE_VALIDATORS: Record<SimpleCommandType, (world: SimWorld, ac: Aircraf
   PUSHBACK: validatePushback,
   LINE_UP: validateLineUp,
   TAKEOFF: validateTakeoff,
+  GO_AROUND: validateGoAround,
   HOLD: validateHold,
   CONTINUE: validateContinue,
 };
@@ -304,6 +319,7 @@ function taxiOption(world: SimWorld, ac: Aircraft): CommandOption {
 export function getCommandOptions(world: SimWorld, ac: Aircraft): CommandOption[] {
   // Hold and continue share one slot: whichever applies right now.
   const hold = simpleOption(world, ac, ac.taxiHold ? 'CONTINUE' : 'HOLD');
-  if (ac.flightType === 'ARRIVAL') return [simpleOption(world, ac, 'LAND'), taxiOption(world, ac), hold];
+  // Landing clearance and go-around share one slot as well.
+  if (ac.flightType === 'ARRIVAL') return [simpleOption(world, ac, ac.status === 'LANDING' ? 'GO_AROUND' : 'LAND'), taxiOption(world, ac), hold];
   return [simpleOption(world, ac, 'PUSHBACK'), taxiOption(world, ac), hold, simpleOption(world, ac, 'LINE_UP'), simpleOption(world, ac, 'TAKEOFF')];
 }

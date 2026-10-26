@@ -49,6 +49,11 @@ export class GameController {
     this.publish();
   }
 
+  endShift(): void {
+    this.sim.endShift();
+    this.publish();
+  }
+
   restart(): void {
     this.sim.restart();
     this.store.setState({ selectedId: null });

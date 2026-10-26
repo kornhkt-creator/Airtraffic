@@ -38,7 +38,7 @@ export type AircraftStatus = (typeof AIRCRAFT_STATUSES)[number];
 
 export type GameStatus = 'MENU' | 'RUNNING' | 'PAUSED' | 'GAME_OVER';
 
-export type NavKind = 'none' | 'inbound' | 'holding' | 'approach' | 'rollout' | 'taxi' | 'pushback' | 'lineup' | 'takeoff' | 'divert';
+export type NavKind = 'none' | 'inbound' | 'holding' | 'approach' | 'goaround' | 'rollout' | 'taxi' | 'pushback' | 'lineup' | 'takeoff' | 'divert';
 
 export interface NavState {
   path: Path | null;
@@ -105,7 +105,12 @@ export interface Aircraft {
   conflict: boolean;
   /** Controller told this taxiing aircraft to hold position. */
   taxiHold: boolean;
+  /** Delay penalties already charged for the current wait (resets when the wait does). */
+  delayPenalties: number;
 }
+
+/** Why a game ended. */
+export type GameEndReason = 'collision' | 'shift-ended';
 
 /** The collision that ended the game. */
 export interface CrashInfo {
@@ -118,7 +123,7 @@ export interface CrashInfo {
 }
 
 /** Commands that need no parameter besides the aircraft. */
-export type SimpleCommandType = 'LAND' | 'PUSHBACK' | 'LINE_UP' | 'TAKEOFF' | 'HOLD' | 'CONTINUE';
+export type SimpleCommandType = 'LAND' | 'GO_AROUND' | 'PUSHBACK' | 'LINE_UP' | 'TAKEOFF' | 'HOLD' | 'CONTINUE';
 
 export type Command =
   | { type: SimpleCommandType; aircraftId: string }

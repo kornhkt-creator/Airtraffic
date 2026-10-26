@@ -36,6 +36,10 @@ export const SIM_CONFIG = {
     stackClearance: 200,
     /** LAND is accepted only from the bottom level, within this altitude tolerance. */
     landingAltitudeTolerance: 60,
+    /** A go-around climbs straight ahead this far along the runway heading before turning back to the hold. */
+    goAroundClimbOut: 1500,
+    /** Arrivals waiting for a free stack level hold this far above the top level. */
+    aboveStackMargin: 200,
     /** Seconds in the holding pattern before an arrival diverts. */
     maxHoldingTime: 180,
     /** Warning issued this many seconds before a diversion. */
@@ -139,6 +143,15 @@ export const SIM_CONFIG = {
     arrivalCompleted: 100,
     departureCompleted: 100,
     diversionPenalty: 50,
+    /** Each go-around. */
+    goAroundPenalty: 20,
+    /** For every full `delayThreshold` seconds a flight waits on the ground for an instruction. */
+    delayPenalty: 10,
+    delayThreshold: 60,
+    /** Once per aircraft and runway entered without clearance. */
+    incursionPenalty: 100,
+    /** Once per pair that comes dangerously close (ground) or loses separation (air). */
+    conflictPenalty: 25,
   },
 
   alerts: {

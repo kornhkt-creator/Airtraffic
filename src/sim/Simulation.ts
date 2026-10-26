@@ -1,4 +1,5 @@
-import type { Aircraft, Alert, AlertSeverity, Command, CommandResult, CrashInfo, GameStatus, SimEvent, Vec2, Vec3 } from './types';
+import type { Aircraft, Alert, AlertSeverity, Command, CommandResult, CrashInfo, GameEndReason, GameStatus, SimEvent, Vec2, Vec3 } from './types';
+import type { PenaltyReason } from './ScoringSystem';
 import type { SimWorld } from './world';
 import type { AircraftView, RunwayView, SimSnapshot } from './snapshot';
 import { SIM_CONFIG } from './config';
@@ -14,7 +15,7 @@ import { transition } from './aircraft/AircraftStateMachine';
 import { updateAircraft } from './aircraft/AircraftAI';
 import { assignPath } from './aircraft/MovementSystem';
 import { apronNodeOf, createHoldingLoop, glideAltitude, planInbound } from './aircraft/navigation';
-import { compactHoldingStack, freeHoldingLevel, levelAltitude } from './aircraft/holdingStack';
+import { compactHoldingStack, freeHoldingLevel, levelAltitude, stackAltitude } from './aircraft/holdingStack';
 import { difficultyLevel, isActiveFlight, SpawnSystem } from './SpawnSystem';
 import type { Path } from './path/Path';
 import { fromAngle, M_TO_FT, MS_TO_KT, toCompassDeg } from './math';
@@ -44,6 +45,7 @@ export class Simulation implements SimWorld {
   alerts: Alert[] = [];
   /** The collision that ended the game (set exactly once per game). */
   crash: CrashInfo | null = null;
+  endReason: GameEndReason | null = null;
 
   private seed: number;
   private rng: Rng;
@@ -72,6 +74,7 @@ export class Simulation implements SimWorld {
     this.aircraft = [];
     this.alerts = [];
     this.crash = null;
+    this.endReason = null;
     this.conflictAlerts.clear();
     this.events = [];
     this.nextAircraftNumber = 1;
@@ -97,6 +100,14 @@ export class Simulation implements SimWorld {
 
   resume(): void {
     if (this.status === 'PAUSED') this.status = 'RUNNING';
+  }
+
+  /** Ends the shift voluntarily and shows the mission summary. */
+  endShift(): void {
+    if (this.status !== 'RUNNING' && this.status !== 'PAUSED') return;
+    this.status = 'GAME_OVER';
+    this.endReason = 'shift-ended';
+    this.pushAlert('info', 'Shift ended.');
   }
 
   togglePause(): void {
@@ -133,6 +144,7 @@ export class Simulation implements SimWorld {
     this.processEvents();
     if (this.checkCollisions()) return;
     this.updateConflicts();
+    this.chargeDelays();
     this.spawner.update(this, this.rng, this.autoSpawn);
     this.alerts = this.alerts.filter((a) => a.expiresAt === null || a.expiresAt > this.time);
   }
@@ -159,6 +171,7 @@ export class Simulation implements SimWorld {
       time: this.time,
     };
     this.status = 'GAME_OVER';
+    this.endReason = 'collision';
     this.events = [];
     this.pushAlert('critical', `COLLISION — ${a.callsign} and ${b.callsign} collided. Game over.`, a.id);
     return true;
@@ -168,7 +181,8 @@ export class Simulation implements SimWorld {
   private updateConflicts(): void {
     for (const ac of this.aircraft) ac.conflict = false;
     const active = new Map<string, number>();
-    const raise = (key: string, message: string, aircraftId: string): void => {
+    /** Reports a conflict; a new occurrence can carry a penalty (charged once per subject). */
+    const raise = (key: string, message: string, aircraftId: string, penalty?: { subject: string; reason: PenaltyReason }): void => {
       if (active.has(key)) return; // already reported this tick by another detector
       const id = this.conflictAlerts.get(key);
       const alert = id === undefined ? undefined : this.alerts.find((x) => x.id === id);
@@ -179,7 +193,8 @@ export class Simulation implements SimWorld {
       } else if (id !== undefined) {
         active.set(key, id);
       } else {
-        active.set(key, this.pushAlert('warning', message, aircraftId));
+        const points = penalty ? this.scoring.recordPenalty(penalty.subject, penalty.reason) : null;
+        active.set(key, this.pushAlert('warning', points === null ? message : `${message} \u2212${points}`, aircraftId));
       }
     };
     for (const { a, b } of findProximities(this.aircraft, SIM_CONFIG.safety.conflictBuffer)) {
@@ -188,7 +203,7 @@ export class Simulation implements SimWorld {
       a.conflict = true;
       b.conflict = true;
       const key = [a.id, b.id].sort().join('|');
-      raise(key, `Traffic conflict — ${a.callsign} and ${b.callsign} are dangerously close!`, a.id);
+      raise(key, `Traffic conflict — ${a.callsign} and ${b.callsign} are dangerously close!`, a.id, { subject: key, reason: 'conflict' });
     }
     const headOn = [...findRouteConflicts(this.aircraft, this.routes), ...findHeadOn(this.aircraft)];
     for (const { a, b } of headOn) {
@@ -201,14 +216,34 @@ export class Simulation implements SimWorld {
       a.conflict = true;
       b.conflict = true;
       const key = `air|${[a.id, b.id].sort().join('|')}`;
-      raise(key, `Separation lost — ${a.callsign} and ${b.callsign} are too close in the air.`, a.id);
+      raise(key, `Separation lost — ${a.callsign} and ${b.callsign} are too close in the air.`, a.id, { subject: key, reason: 'conflict' });
     }
     for (const { ac, runway } of findRunwayIncursions(this.aircraft, this.routes.layout)) {
       ac.conflict = true;
       const key = `incursion|${ac.id}|${runway.id}`;
-      raise(key, `RUNWAY INCURSION — ${ac.callsign} is on runway ${runway.designators[0]} without clearance!`, ac.id);
+      raise(key, `RUNWAY INCURSION — ${ac.callsign} is on runway ${runway.designators[0]} without clearance!`, ac.id, { subject: key, reason: 'incursion' });
     }
     this.conflictAlerts = active;
+  }
+
+  /**
+   * Delay penalty: a flight waiting on the ground for an instruction (at the gate, after landing or
+   * pushback, at the holding point, lined up) is charged for every full threshold it waits. Holding
+   * in the air is covered by the diversion rule instead.
+   */
+  private chargeDelays(): void {
+    const { delayThreshold } = SIM_CONFIG.scoring;
+    for (const ac of this.aircraft) {
+      const waitingOnGround = ac.altitude === 0 && ac.status !== 'CRASHED' && !(ac.flightType === 'ARRIVAL' && ac.status === 'AT_GATE');
+      const due = waitingOnGround ? Math.floor(ac.waitTime / delayThreshold) : 0;
+      // A new instruction resets the wait, and with it the count for this wait.
+      if (due < ac.delayPenalties) ac.delayPenalties = due;
+      while (ac.delayPenalties < due) {
+        ac.delayPenalties += 1;
+        const points = this.scoring.recordPenalty(ac.id, 'delay', `${this.tick}:${ac.delayPenalties}`);
+        if (points !== null) this.pushAlert('warning', `${ac.callsign} has been waiting ${ac.delayPenalties * delayThreshold / 60} min for an instruction. \u2212${points}`, ac.id);
+      }
+    }
   }
 
   // ---- World access ----------------------------------------------------------------------
@@ -278,6 +313,7 @@ export class Simulation implements SimWorld {
       holdingLevel: null,
       divertWarned: false,
       gateTime: 0,
+      delayPenalties: 0,
       conflict: false,
       taxiHold: false,
     };
@@ -346,6 +382,9 @@ export class Simulation implements SimWorld {
       if (!ac) continue;
       if (e.type === 'STATUS_CHANGED' && e.to === 'LANDED') {
         this.pushAlert('info', `${ac.callsign} touched down.`, ac.id);
+      } else if (e.type === 'STATUS_CHANGED' && e.to === 'GO_AROUND') {
+        const points = this.scoring.recordPenalty(ac.id, 'goAround', String(this.tick));
+        if (points !== null) this.pushAlert('warning', `${ac.callsign} going around. −${points}`, ac.id);
       } else if (e.type === 'STATUS_CHANGED' && e.to === 'HOLDING') {
         this.pushAlert('info', `${ac.callsign} holding short runway ${this.routes.layout.departureRunway.designators[0]}, ready for departure.`, ac.id);
       } else if (e.type === 'RUNWAY_VACATED' && !ac.pendingRoute && ac.status === 'LANDED') {
@@ -399,11 +438,11 @@ export class Simulation implements SimWorld {
     const liftoff = (d.rotationSpeed * d.rotationSpeed) / (2 * d.takeoffAccel);
     const altitudeAt = (s: number): number => {
       if (kind === 'approach') return glideAltitude(path.length - s);
-      if (kind === 'holding' || kind === 'inbound' || kind === 'divert') return levelAltitude(ac.holdingLevel);
+      if (kind === 'holding' || kind === 'inbound' || kind === 'divert' || kind === 'goaround') return stackAltitude(ac);
       if (kind === 'takeoff') return Math.min(d.climbAltitude, ac.altitude + Math.max(0, s - startS - (ac.altitude > 0 ? 0 : liftoff)) * (d.climbRate / d.climbSpeed));
       return 0;
     };
-    const airborne = kind === 'holding' || kind === 'inbound' || kind === 'divert' || kind === 'approach' || kind === 'takeoff';
+    const airborne = kind === 'holding' || kind === 'inbound' || kind === 'divert' || kind === 'approach' || kind === 'goaround' || kind === 'takeoff';
     const points: Vec3[] = path.samplePoints(airborne ? 120 : 8).map(({ s, position }) => ({ x: position.x, y: position.y, alt: altitudeAt(s) }));
     if (ac.pendingRoute) {
       // A rollout ends on the route's first node; a pushback ends short of it.
@@ -424,6 +463,10 @@ export class Simulation implements SimWorld {
       }
       case 'DIVERTED':
         return 'Diverting to alternate airport';
+      case 'GO_AROUND': {
+        const ft = Math.round((stackAltitude(ac) * M_TO_FT) / 100) * 100;
+        return `Going around — climbing to ${ft} ft, then rejoining the hold`;
+      }
       case 'LANDING':
         return `Cleared to land RWY ${rwy}`;
       case 'LANDED': {
@@ -499,6 +542,16 @@ export class Simulation implements SimWorld {
       alerts: this.alerts.map((a) => ({ ...a })),
       runways: this.runwayViews(),
       crash: this.crash ? { ...this.crash, position: { ...this.crash.position } } : null,
+      endReason: this.endReason,
+      summary: {
+        score: this.scoring.score,
+        duration: this.time,
+        difficultyLevel: difficultyLevel(this.time),
+        completedArrivals: this.scoring.completedArrivals,
+        completedDepartures: this.scoring.completedDepartures,
+        penaltyPoints: this.scoring.penaltyPoints,
+        penalties: { ...this.scoring.penaltyCounts },
+      },
     };
   }
 }

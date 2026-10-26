@@ -35,6 +35,15 @@ export function planDivert(ac: Aircraft, layout: AirportLayout = AIRPORT): Path 
   );
 }
 
+/** Missed approach: straight climb-out along the runway heading, then a curved return to the holding pattern. */
+export function planGoAround(ac: Aircraft, holdingLoop: Path): Path {
+  const air = SIM_CONFIG.air;
+  const dir = fromAngle(ac.heading);
+  const climbOutEnd = { x: ac.position.x + dir.x * air.goAroundClimbOut, y: ac.position.y + dir.y * air.goAroundClimbOut };
+  const back = dubinsSegments({ position: climbOutEnd, heading: ac.heading }, holdingLoop.startSample, air.turnRadius, air.approachSpeed);
+  return new Path([lineSegment(ac.position, climbOutEnd, air.approachSpeed), ...back], AIR_MOTION);
+}
+
 /** Target altitude on the approach given the remaining distance to touchdown. */
 export function glideAltitude(remainingToTouchdown: number): number {
   return Math.min(SIM_CONFIG.air.holdingAltitude, Math.max(0, remainingToTouchdown) * glideTan);

@@ -200,7 +200,11 @@ describe('Long traffic run', () => {
     expect(maxLevelsShared).toBe(0);
     expect(violations).toBe(0);
     expect(sim.scoring.diversions).toBeGreaterThan(5);
-    expect(sim.scoring.score).toBe(-sim.scoring.diversions * SIM_CONFIG.scoring.diversionPenalty);
+    // Nothing is completed, so the score is exactly the penalties: diversions plus delays of the
+    // departures left waiting at their gates.
+    expect(sim.scoring.score).toBe(-sim.scoring.penaltyPoints);
+    const { diversion, delay } = sim.scoring.penaltyCounts;
+    expect(sim.scoring.penaltyPoints).toBe(diversion * SIM_CONFIG.scoring.diversionPenalty + delay * SIM_CONFIG.scoring.delayPenalty);
     // Gates fill with waiting departures, but one is always kept free for arrivals.
     expect(sim.freeGates().length).toBeGreaterThanOrEqual(SIM_CONFIG.traffic.keepFreeGates);
   });

@@ -58,6 +58,9 @@ export function ScorePanel() {
         <button type="button" className="btn" title="Fit the whole map on screen" onClick={() => controller.setCameraView('airport')}>
           ⤢ Fit
         </button>
+        <button type="button" className="btn" disabled={!inGame} title="End the shift and see the mission summary" onClick={() => controller.endShift()}>
+          ■ End shift
+        </button>
         <button type="button" className="btn" disabled={!inGame && status !== 'GAME_OVER'} onClick={() => controller.restart()}>
           ↻ Restart
         </button>

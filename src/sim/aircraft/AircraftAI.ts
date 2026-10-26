@@ -5,7 +5,7 @@ import { transition } from './AircraftStateMachine';
 import { advanceAlongPath, assignPath, remainingDistance, updateAltitude } from './MovementSystem';
 import { followSpeedCap } from '../safety/CollisionSystem';
 import { distancePastRunwayEnd, glideAltitude, planDivert, planRollout, planTaxi } from './navigation';
-import { levelAltitude } from './holdingStack';
+import { stackAltitude } from './holdingStack';
 
 /**
  * Starts taxiing along a validated ground route. `startPoint` is used when the aircraft is not on
@@ -81,7 +81,7 @@ function updateApproach(world: SimWorld, ac: Aircraft, dt: number): void {
   if (advanceAlongPath(ac, dt) && ac.nav.kind === 'inbound') {
     assignPath(ac, world.holdingLoop, 'holding', air.approachSpeed);
   }
-  updateAltitude(ac, levelAltitude(ac.holdingLevel), air.maxVerticalSpeed, dt);
+  updateAltitude(ac, stackAltitude(ac), air.maxVerticalSpeed, dt);
   if (ac.nav.kind !== 'holding') return;
 
   ac.waitTime += dt;
@@ -106,7 +106,17 @@ export function updateAircraft(world: SimWorld, ac: Aircraft, dt: number): void 
       break;
     case 'DIVERTED': {
       if (advanceAlongPath(ac, dt)) assignPath(ac, null, 'none', 0);
-      updateAltitude(ac, levelAltitude(ac.holdingLevel), air.maxVerticalSpeed, dt);
+      updateAltitude(ac, stackAltitude(ac), air.maxVerticalSpeed, dt);
+      break;
+    }
+    case 'GO_AROUND': {
+      // Climb to the stack, fly back to the holding fix, then hold as a normal arrival again.
+      const finished = advanceAlongPath(ac, dt);
+      updateAltitude(ac, stackAltitude(ac), air.maxVerticalSpeed, dt);
+      if (finished) {
+        transition(ac, 'APPROACH', (e) => world.emit(e));
+        assignPath(ac, world.holdingLoop, 'holding', air.approachSpeed);
+      }
       break;
     }
     case 'LANDING': {
@@ -151,7 +161,7 @@ export function updateAircraft(world: SimWorld, ac: Aircraft, dt: number): void 
       updateTakeoff(world, ac, dt);
       break;
     default:
-      // Crashed aircraft stay where they are; GO_AROUND behavior arrives with a later milestone.
+      // Crashed aircraft stay where they are.
       break;
   }
 }
