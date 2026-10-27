@@ -8,6 +8,8 @@ export interface UiState {
   snapshot: SimSnapshot;
   selectedId: string | null;
   cameraView: CameraView;
+  /** Flight list drawer open (only shown as a drawer on narrow screens). */
+  flightsOpen: boolean;
   /** Bumped to re-apply the current view preset (e.g. after the player orbited away). */
   cameraResetToken: number;
 }
@@ -26,7 +28,7 @@ export class GameController {
 
   constructor(seed = Date.now() % 100000) {
     this.sim = new Simulation({ seed });
-    this.store = createStore<UiState>(() => ({ snapshot: this.sim.snapshot(), selectedId: null, cameraView: 'airport', cameraResetToken: 0 }));
+    this.store = createStore<UiState>(() => ({ snapshot: this.sim.snapshot(), selectedId: null, cameraView: 'airport', flightsOpen: false, cameraResetToken: 0 }));
   }
 
   /** Called once per rendered frame with the real elapsed time. */
@@ -86,6 +88,10 @@ export class GameController {
     const ac = id ? this.sim.getAircraft(id) : undefined;
     if (!ac || ac.status !== 'TAXIING') return;
     this.command({ type: ac.taxiHold ? 'CONTINUE' : 'HOLD', aircraftId: ac.id });
+  }
+
+  setFlightsOpen(open: boolean): void {
+    this.store.setState({ flightsOpen: open });
   }
 
   /** Switches to a camera preset; choosing the current one again snaps back to it. */

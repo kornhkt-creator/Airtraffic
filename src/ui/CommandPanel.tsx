@@ -6,11 +6,18 @@ import { formatClock, STATUS_LABEL, statusClass } from './format';
 
 /** Right panel: selected aircraft details and the commands that can be issued to it. */
 export function CommandPanel() {
+  const controller = useGame();
   const selected = useGameStore((s) => s.snapshot.aircraft.find((a) => a.id === s.selectedId) ?? null);
 
   return (
     <aside className="panel right-panel">
-      <h2 className="panel-title">Aircraft</h2>
+      <div className="panel-head">
+        <h2 className="panel-title">Aircraft</h2>
+        {/* Only shown when the panel is a bottom sheet (phones). */}
+        <button type="button" className="panel-close" aria-label="Close aircraft panel" onClick={() => controller.select(null)}>
+          ✕
+        </button>
+      </div>
       {selected ? <Details aircraft={selected} /> : <p className="muted">Select an aircraft in the list or click it on the map.</p>}
     </aside>
   );
@@ -61,12 +68,14 @@ function Details({ aircraft: a }: { aircraft: AircraftView }) {
         <span className="stat-label">Current instruction</span>
         <span>{a.target}</span>
       </div>
-      <h3 className="section-title">Commands</h3>
-      <div className="commands">
-        {a.commands.map((c) => (
-          <CommandControl key={c.type} aircraftId={a.id} option={c} />
-        ))}
-      </div>
+      <section className="details-commands">
+        <h3 className="section-title">Commands</h3>
+        <div className="commands">
+          {a.commands.map((c) => (
+            <CommandControl key={c.type} aircraftId={a.id} option={c} />
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

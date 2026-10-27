@@ -25,6 +25,8 @@ body,
   margin: 0;
   height: 100%;
   overflow: hidden;
+  /* clip (unlike hidden) also forbids programmatic scrolling, e.g. toward an off-screen drawer. */
+  overflow: clip;
 }
 
 button {
@@ -34,7 +36,9 @@ button {
 
 .app {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
+  /* minmax(0, …) lets the column shrink to the screen instead of growing to the widest child. */
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
 }
 
@@ -177,7 +181,7 @@ button {
 /* ---------- Layout ---------- */
 .layout {
   display: grid;
-  grid-template-columns: 250px 1fr 310px;
+  grid-template-columns: 250px minmax(0, 1fr) 310px;
   min-height: 0;
 }
 
@@ -579,11 +583,6 @@ button {
   }
 }
 
-@media (max-width: 1100px) {
-  .layout {
-    grid-template-columns: 210px 1fr 270px;
-  }
-}
 
 /* ---- Collisions and game over ---- */
 .ac-label.conflict {
@@ -730,4 +729,399 @@ button {
 .dest-grid.runway-grid .btn {
   font-weight: 700;
   font-size: 14px;
+}
+
+/* =====================================================================================
+   Responsive layout and touch devices (phones, tablets, desktop; iOS and Android)
+   - ≥1100px: three columns (flights | map | aircraft)
+   - 768–1099px: flight list becomes a drawer opened with "✈ Flights"
+   - <768px: map full screen, aircraft panel becomes a bottom sheet when one is selected
+   - short landscape phones: aircraft panel becomes a right-hand sheet instead
+   ===================================================================================== */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* No double-tap page zoom; pinch zoom on the map is handled by the camera. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.app {
+  /* dvh follows the visible area when mobile browser toolbars show and hide. */
+  height: 100vh;
+  height: 100dvh;
+}
+
+.viewport canvas {
+  touch-action: none;
+}
+
+.hud {
+  padding-top: max(8px, env(safe-area-inset-top));
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.panel-head .panel-title {
+  margin: 0;
+}
+
+.panel-close {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  background: #1c2a40;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.flights-toggle,
+.drawer-backdrop {
+  display: none;
+}
+
+.overlay .modal {
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+}
+
+.hint-touch {
+  display: none;
+}
+
+/* Touch screens: bigger tap targets and labels, touch hints instead of mouse hints. */
+@media (pointer: coarse) {
+  .hint-touch {
+    display: block;
+  }
+  .hint-mouse {
+    display: none;
+  }
+  .btn,
+  .segmented button {
+    min-height: 40px;
+  }
+  .btn.cmd {
+    min-height: 44px;
+  }
+  .flight-row {
+    padding: 10px 12px;
+  }
+  .ac-label {
+    font-size: 12px;
+    padding: 3px 8px;
+  }
+}
+
+/* ---- Tablets and smaller: flight list as a drawer ---- */
+@media (max-width: 1099px) {
+  .layout {
+    position: relative;
+    /* Drawers slide in from outside the layout; keep them clipped while closed. */
+    overflow: hidden;
+    overflow: clip;
+    grid-template-columns: minmax(0, 1fr) 290px;
+  }
+
+  /* Panels floating over the map get an opaque background so map labels don't show through. */
+  .left-panel,
+  .right-panel {
+    background: #0f1726;
+  }
+
+  .left-panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(300px, 85vw);
+    z-index: 40;
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+    transform: translateX(-105%);
+    transition: transform 0.22s ease;
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .app.flights-open .left-panel {
+    transform: none;
+  }
+
+  .left-panel .panel-close {
+    display: inline-flex;
+  }
+
+  .flights-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    position: absolute;
+    top: 10px;
+    left: max(10px, env(safe-area-inset-left));
+    z-index: 30;
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(34, 211, 238, 0.5);
+    background: rgba(15, 23, 38, 0.92);
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  }
+
+  .flights-count {
+    background: var(--accent-strong);
+    color: #fff;
+    border-radius: 999px;
+    padding: 0 7px;
+    font-size: 12px;
+  }
+
+  .drawer-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 35;
+    background: rgba(0, 0, 0, 0.35);
+  }
+
+  .hud {
+    gap: 12px;
+  }
+
+  /* Icon-only controls leave the stats strip room on tablets too. */
+  .btn-text {
+    display: none;
+  }
+
+  .hud-stats {
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .hud-stats::-webkit-scrollbar {
+    display: none;
+  }
+
+  .stat {
+    flex-shrink: 0;
+  }
+}
+
+/* ---- Phones (portrait): map full screen, aircraft panel as a bottom sheet ---- */
+@media (max-width: 767px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .right-panel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 58%;
+    z-index: 38;
+    border-left: none;
+    border-top: 1px solid var(--panel-border);
+    border-radius: 14px 14px 0 0;
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+    transform: translateY(105%);
+    transition: transform 0.22s ease;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .app.has-selection .right-panel {
+    transform: none;
+  }
+
+  .right-panel .panel-close {
+    display: inline-flex;
+  }
+
+  /* HUD: brand and controls on the first row, swipeable stats on the second. */
+  .hud {
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    padding-bottom: 6px;
+    padding-left: max(10px, env(safe-area-inset-left));
+    padding-right: max(10px, env(safe-area-inset-right));
+  }
+
+  .brand {
+    order: 1;
+  }
+
+  .hud-controls {
+    order: 2;
+    margin-left: auto;
+    gap: 6px;
+  }
+
+  .hud-stats {
+    order: 3;
+    flex-basis: 100%;
+    gap: 6px;
+  }
+
+  .stat {
+    min-width: 62px;
+    padding: 3px 8px;
+  }
+
+  .stat-value {
+    font-size: 15px;
+  }
+
+  .btn-text {
+    display: none;
+  }
+
+  .hud-controls .btn {
+    padding: 6px 10px;
+  }
+
+  .segmented button {
+    padding: 6px 8px;
+  }
+
+  .alerts {
+    top: 56px;
+    bottom: auto;
+    left: 8px;
+    right: 8px;
+    max-width: none;
+  }
+
+  .alert {
+    font-size: 12px;
+  }
+
+  .alert:nth-child(n + 4) {
+    display: none;
+  }
+
+  .pause-banner,
+  .game-over-banner {
+    top: 56px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .readout {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .modal {
+    padding: 18px;
+  }
+
+  .modal h1 {
+    font-size: 18px;
+  }
+
+  .summary.incidents {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---- Short landscape phones: aircraft panel slides in from the right ---- */
+@media (max-width: 1099px) and (max-height: 500px) and (orientation: landscape) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .right-panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    left: auto;
+    width: min(320px, 50vw);
+    max-height: none;
+    z-index: 38;
+    border-radius: 0;
+    border-top: none;
+    border-left: 1px solid var(--panel-border);
+    padding-right: max(14px, env(safe-area-inset-right));
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+    transform: translateX(105%);
+    transition: transform 0.22s ease;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .app.has-selection .right-panel {
+    transform: none;
+  }
+
+  .right-panel .panel-close {
+    display: inline-flex;
+  }
+
+  .hud {
+    flex-wrap: nowrap;
+    padding-top: max(4px, env(safe-area-inset-top));
+    padding-bottom: 4px;
+  }
+
+  .hud-stats {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .stat-label {
+    font-size: 9px;
+  }
+
+  .stat-value {
+    font-size: 14px;
+  }
+
+  .btn-text {
+    display: none;
+  }
+
+  .alerts {
+    top: 52px;
+    bottom: auto;
+  }
+}
+
+/* Phones in either orientation: in the aircraft sheet the commands come right after the callsign,
+   the current instruction and readout follow. */
+@media (max-width: 767px), (max-width: 1099px) and (max-height: 500px) and (orientation: landscape) {
+  .details {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .details-commands {
+    order: 1;
+  }
+
+  .details-commands .section-title {
+    margin-top: 4px;
+  }
+
+  .target {
+    order: 2;
+  }
+
+  .readout {
+    order: 3;
+    margin-top: 12px;
+  }
 }

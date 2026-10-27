@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { GameController } from './game/GameController';
-import { GameProvider } from './game/GameContext';
+import { GameProvider, useGame, useGameStore } from './game/GameContext';
 import { installDebugHook } from './game/debugHook';
 import { GameCanvas } from './scene/GameCanvas';
 import { ScorePanel } from './ui/ScorePanel';
@@ -30,20 +30,40 @@ export function App() {
 
   return (
     <GameProvider controller={controller}>
-      <div className="app">
-        <ScorePanel />
-        <main className="layout">
-          <AircraftPanel />
-          <section className="viewport">
-            <GameCanvas />
-            <PauseBanner />
-            <AlertPanel />
-            <StartScreen />
-            <GameOverScreen />
-          </section>
-          <CommandPanel />
-        </main>
-      </div>
+      <AppShell />
     </GameProvider>
+  );
+}
+
+/**
+ * Page layout. CSS picks the arrangement per screen size: three columns on desktop; on tablets the
+ * flight list becomes a drawer; on phones the command panel becomes a bottom sheet as well. The
+ * classes below tell the CSS which drawers are open.
+ */
+function AppShell() {
+  const controller = useGame();
+  const hasSelection = useGameStore((s) => s.selectedId !== null);
+  const flightsOpen = useGameStore((s) => s.flightsOpen);
+  const flightCount = useGameStore((s) => s.snapshot.activeFlights);
+
+  return (
+    <div className={`app ${hasSelection ? 'has-selection' : ''} ${flightsOpen ? 'flights-open' : ''}`}>
+      <ScorePanel />
+      <main className="layout">
+        <AircraftPanel />
+        <section className="viewport">
+          <GameCanvas />
+          <button type="button" className="flights-toggle" aria-expanded={flightsOpen} onClick={() => controller.setFlightsOpen(!flightsOpen)}>
+            ✈ Flights <span className="flights-count">{flightCount}</span>
+          </button>
+          {flightsOpen && <div className="drawer-backdrop" onClick={() => controller.setFlightsOpen(false)} />}
+          <PauseBanner />
+          <AlertPanel />
+          <StartScreen />
+          <GameOverScreen />
+        </section>
+        <CommandPanel />
+      </main>
+    </div>
   );
 }

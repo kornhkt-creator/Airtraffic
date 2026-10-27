@@ -9,6 +9,18 @@ async function snapshot(page: Page): Promise<SimSnapshot> {
   });
 }
 
+/**
+ * Selects a flight from the flight list. On tablets and phones the list is a drawer that has to be
+ * opened first; it closes again once a flight is picked.
+ */
+async function selectFlight(page: Page, callsign: string): Promise<void> {
+  const toggle = page.locator('.flights-toggle');
+  if (await toggle.isVisible()) await toggle.click();
+  await page.locator('.flight-row').filter({ hasText: callsign }).click();
+  await expect(page.locator('.right-panel')).toContainText(callsign);
+  await expect(page.locator('.right-panel')).toBeInViewport();
+}
+
 async function statusOf(page: Page, callsign: string): Promise<string | undefined> {
   return (await snapshot(page)).aircraft.find((a) => a.callsign === callsign)?.status;
 }
@@ -28,14 +40,15 @@ test.describe('smoke', () => {
     // Start screen → running game with traffic in the flight list.
     await page.getByRole('button', { name: 'Start shift' }).click();
     await expect.poll(async () => (await snapshot(page)).status).toBe('RUNNING');
-    const rows = page.locator('.flight-row');
-    await expect(rows).not.toHaveCount(0);
+    await expect(page.locator('.flight-row')).not.toHaveCount(0);
+    // Nothing on the page is wider than the screen (no sideways scrolling on phones).
+    const overflow = await page.evaluate(() => document.querySelector('.app')!.getBoundingClientRect().width - window.innerWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
 
     // Arrival: select it in the list and clear it to land with the real command button.
     const arrival = (await snapshot(page)).aircraft.find((a) => a.flightType === 'ARRIVAL' && a.status === 'APPROACH');
     expect(arrival, 'an arrival is holding at start').toBeTruthy();
-    await rows.filter({ hasText: arrival!.callsign }).click();
-    await expect(page.locator('.right-panel')).toContainText(arrival!.callsign);
+    await selectFlight(page, arrival!.callsign);
     // LAND offers one button per runway; pick 01R.
     await page.getByRole('button', { name: 'RWY 01R' }).click();
     await expect.poll(() => statusOf(page, arrival!.callsign)).toBe('LANDING');
@@ -46,7 +59,7 @@ test.describe('smoke', () => {
     // Departure: approve pushback from the UI.
     const departure = (await snapshot(page)).aircraft.find((a) => a.flightType === 'DEPARTURE' && a.status === 'AT_GATE');
     expect(departure, 'a departure is waiting at a gate').toBeTruthy();
-    await rows.filter({ hasText: departure!.callsign }).click();
+    await selectFlight(page, departure!.callsign);
     await page.getByRole('button', { name: /Approve pushback/ }).click();
     await expect.poll(() => statusOf(page, departure!.callsign)).toBe('PUSHBACK');
 

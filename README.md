@@ -13,12 +13,27 @@ npm run typecheck  # app + test/tooling configs
 npm run build
 ```
 
-Browser smoke test (Playwright). The first run needs the browser once:
+Browser smoke test (Playwright) on desktop, Android (Pixel 7), iPad and iPhone 14 — the Apple
+devices run on WebKit, Safari's engine. The first run needs the browsers once:
 
 ```bash
-npx playwright install chromium
+npx playwright install chromium webkit
 npm run test:e2e   # starts the dev server itself, or reuses one on port 5173
 ```
+
+## Devices
+
+The layout adapts to the screen:
+
+| Screen | Layout |
+|---|---|
+| Desktop (≥1100 px) | Flight list, map and aircraft panel side by side |
+| Tablet (768–1099 px) | Flight list in a drawer (**✈ Flights**), aircraft panel on the right |
+| Phone, portrait (<768 px) | Full-screen map; flight list drawer; aircraft panel slides up when a flight is selected |
+| Phone, landscape | Full-screen map; aircraft panel slides in from the right |
+
+On touch screens: drag to pan, pinch to zoom, tap an aircraft or its label to select it.
+Notches and home indicators are respected, and the game can be added to the home screen on iOS and Android.
 
 ## How to play
 

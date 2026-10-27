@@ -13,6 +13,6 @@ export const CAMERA_HEIGHT = 6000;
 
 /** Map view for the top-down 2D camera. */
 export const CAMERA_PRESETS: Record<CameraView, CameraPreset> = {
-  /** One screen for everything: holding stack, final approach, both runways, terminal and climb-out. */
-  airport: { minX: -2450, maxX: 1180, minY: -1880, maxY: 1230 },
+  /** One screen for everything: holding stack, arrival route (downwind at x -2600), both runways, terminal and climb-out. */
+  airport: { minX: -2780, maxX: 1180, minY: -1880, maxY: 1230 },
 };

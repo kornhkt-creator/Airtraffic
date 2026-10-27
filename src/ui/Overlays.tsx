@@ -12,7 +12,7 @@ export function StartScreen() {
     <div className="overlay">
       <div className="modal">
         <h1>Airport Traffic Control Simulator 3D</h1>
-        <p className="lead">You are the controller at Suvarnabhumi International. Land arrivals on runway 01L, park them at the gates, and get departures airborne from runway 01R — no collisions.</p>
+        <p className="lead">You are the controller at Suvarnabhumi International. Land arrivals on runway 01L or 01R, park them at the gates, and get departures airborne from runway 01R — no collisions.</p>
         <ol className="howto">
           <li>Select an aircraft from the list or click it on the map.</li>
           <li>
@@ -25,7 +25,9 @@ export function StartScreen() {
             Aircraft that touch <b>collide and end the game</b>. Watch for red rings and use <b>HOLD</b> to stop a taxiing aircraft — nobody can reverse on a taxiway.
           </li>
         </ol>
-        <p className="muted small">Map: drag to pan, wheel to zoom. P pauses, H holds/continues the selected aircraft, Esc deselects.</p>
+        {/* CSS shows the hint matching the device's pointer (mouse vs touch). */}
+        <p className="muted small hint-mouse">Map: drag to pan, wheel to zoom. P pauses, H holds/continues the selected aircraft, Esc deselects.</p>
+        <p className="muted small hint-touch">Map: drag to pan, pinch to zoom, tap an aircraft to select it. ✈ Flights opens the flight list.</p>
         <button type="button" className="btn primary large" onClick={() => controller.start()}>
           Start shift
         </button>

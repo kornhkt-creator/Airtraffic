@@ -9,6 +9,13 @@ import { CAMERA_HEIGHT } from './cameraPresets';
 
 const SKY = '#a8c8e6';
 
+/**
+ * Phones and tablets get a lighter render: smaller shadow map and a capped pixel ratio, which keeps
+ * the frame rate up on mobile GPUs (and battery use down) without changing the picture much.
+ */
+const LOW_POWER =
+  typeof window !== 'undefined' && (window.matchMedia('(pointer: coarse)').matches || Math.min(window.innerWidth, window.innerHeight) < 768);
+
 /** Drives the simulation from the render loop. Mounted first so it runs before the models read state. */
 function GameLoop() {
   const controller = useGame();
@@ -24,7 +31,7 @@ function Lighting() {
         position={[1200, 2200, 1400]}
         intensity={2.2}
         castShadow
-        shadow-mapSize={[4096, 4096]}
+        shadow-mapSize={LOW_POWER ? [2048, 2048] : [4096, 4096]}
         shadow-camera-left={-1700}
         shadow-camera-right={1700}
         shadow-camera-top={1700}
@@ -43,8 +50,8 @@ export function GameCanvas() {
     <Canvas
       shadows
       orthographic
-      dpr={[1, 2]}
-      gl={{ antialias: true }}
+      dpr={LOW_POWER ? [1, 1.5] : [1, 2]}
+      gl={{ antialias: true, powerPreference: 'high-performance' }}
       camera={{ position: [0, CAMERA_HEIGHT, 1], zoom: 0.5, near: 10, far: CAMERA_HEIGHT * 3 }}
       onPointerMissed={() => controller.select(null)}
     >

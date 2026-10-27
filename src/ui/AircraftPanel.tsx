@@ -10,7 +10,13 @@ export function AircraftPanel() {
 
   return (
     <aside className="panel left-panel">
-      <h2 className="panel-title">Flights</h2>
+      <div className="panel-head">
+        <h2 className="panel-title">Flights</h2>
+        {/* Only shown when the list is a drawer (tablets and phones). */}
+        <button type="button" className="panel-close" aria-label="Close flight list" onClick={() => controller.setFlightsOpen(false)}>
+          ✕
+        </button>
+      </div>
       {aircraft.length === 0 && <p className="muted">No traffic yet.</p>}
       <ul className="flight-list">
         {aircraft.map((a) => (
@@ -18,7 +24,10 @@ export function AircraftPanel() {
             <button
               type="button"
               className={`flight-row ${a.id === selectedId ? 'selected' : ''}`}
-              onClick={() => controller.select(a.id === selectedId ? null : a.id)}
+              onClick={() => {
+                controller.select(a.id === selectedId ? null : a.id);
+                controller.setFlightsOpen(false);
+              }}
             >
               <span className="flight-main">
                 <span className="callsign">{a.callsign}</span>
